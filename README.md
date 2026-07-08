@@ -6,6 +6,8 @@ venues, decoded straight from on-chain account state.
 
 `module github.com/Gealber/soldex` · Go 1.25 · solana-go v1.19
 
+> **Note:** this code was mainly AI-generated.
+
 ## Supported venues
 
 | Venue | Model | Quote |
@@ -15,13 +17,14 @@ venues, decoded straight from on-chain account state.
 | **Orca Whirlpool** | `models` (Whirlpool, oracle, fixed & dynamic tick arrays) | `quote/orca` — adaptive-fee port |
 | **Raydium CLMM** | `models` (PoolState, tick arrays) | `quote/raydium` |
 | **Pump-AMM** (pAMMBay) | `models` (Pool, market-cap fee tiers) | `quote/pump` — constant product |
+| **pump.fun bonding curve** (6EF8rrec) | `models` (BondingCurve) | `quote/pumpbc` — constant product on virtual reserves |
 
 ## Layout
 
 ```
 models/         on-chain account decoders (discriminator-checked)
 math/           fixed-point primitives — common, dlmm, damm, orca, raydium
-quote/          exact-in swap math — dlmm, damm, orca, raydium, pump
+quote/          exact-in swap math — dlmm, damm, orca, raydium, pump, pumpbc
 soldex.go       unified Quoter over all venues
 ```
 

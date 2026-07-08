@@ -46,15 +46,14 @@ func DecodePumpPool(data []byte, address solana.PublicKey) (*PumpPool, error) {
 	if disc != PumpPoolDiscriminator {
 		return nil, fmt.Errorf("%w: got %x, expected %x", ErrInvalidDiscriminator, disc, PumpPoolDiscriminator)
 	}
-	pk := func(off int) solana.PublicKey { return solana.PublicKeyFromBytes(data[off : off+32]) }
 	return &PumpPool{
 		Address:               address,
-		BaseMint:              pk(43),
-		QuoteMint:             pk(75),
-		PoolBaseTokenAccount:  pk(139),
-		PoolQuoteTokenAccount: pk(171),
-		CoinCreator:           pk(211),
-		Creator:               pk(11),
+		BaseMint:              solana.PublicKeyFromBytes(data[43:75]),
+		QuoteMint:             solana.PublicKeyFromBytes(data[75:107]),
+		PoolBaseTokenAccount:  solana.PublicKeyFromBytes(data[139:171]),
+		PoolQuoteTokenAccount: solana.PublicKeyFromBytes(data[171:203]),
+		CoinCreator:           solana.PublicKeyFromBytes(data[211:243]),
+		Creator:               solana.PublicKeyFromBytes(data[11:43]),
 		IsCashbackCoin:        data[244] != 0,
 	}, nil
 }

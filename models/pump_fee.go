@@ -61,14 +61,7 @@ func DecodePumpFeeConfig(data []byte) (*PumpFeeConfig, error) {
 	if len(data) < 69 {
 		return nil, ErrInsufficientData
 	}
-	fees := func(o int) PumpFees {
-		return PumpFees{
-			LpBps:       binary.LittleEndian.Uint64(data[o:]),
-			ProtocolBps: binary.LittleEndian.Uint64(data[o+8:]),
-			CreatorBps:  binary.LittleEndian.Uint64(data[o+16:]),
-		}
-	}
-	cfg := &PumpFeeConfig{Flat: fees(41)}
+	cfg := &PumpFeeConfig{Flat: decodePumpFees(data, 41)}
 	n := int(binary.LittleEndian.Uint32(data[65:]))
 	for i := range n {
 		o := 69 + i*40
@@ -76,9 +69,18 @@ func DecodePumpFeeConfig(data []byte) (*PumpFeeConfig, error) {
 			break
 		}
 		thr := new(big.Int).SetBytes(reverse(data[o : o+16])) // u128 little-endian
-		cfg.Tiers = append(cfg.Tiers, PumpFeeTier{MarketCapThreshold: thr, Fees: fees(o + 16)})
+		cfg.Tiers = append(cfg.Tiers, PumpFeeTier{MarketCapThreshold: thr, Fees: decodePumpFees(data, o+16)})
 	}
 	return cfg, nil
+}
+
+// decodePumpFees reads a PumpFees (lp/protocol/creator bps, 3×u64) at offset o.
+func decodePumpFees(data []byte, o int) PumpFees {
+	return PumpFees{
+		LpBps:       binary.LittleEndian.Uint64(data[o : o+8]),
+		ProtocolBps: binary.LittleEndian.Uint64(data[o+8 : o+16]),
+		CreatorBps:  binary.LittleEndian.Uint64(data[o+16 : o+24]),
+	}
 }
 
 // PumpMarketCap = quote_reserve * base_mint_supply / base_reserve (lamports).
