@@ -16,6 +16,7 @@ venues, decoded straight from on-chain account state.
 | **Meteora DAMM v2** (cp-amm) | `models` (Pool) | `quote/damm` — concentrated + compounding, dynamic fee |
 | **Orca Whirlpool** | `models` (Whirlpool, oracle, fixed & dynamic tick arrays) | `quote/orca` — adaptive-fee port |
 | **Raydium CLMM** | `models` (PoolState, tick arrays) | `quote/raydium` |
+| **Raydium CP-Swap** (CPMMoo8L) | `models` (PoolState, AmmConfig) | `quote/raycpmm` — constant product, fee-on-input |
 | **Pump-AMM** (pAMMBay) | `models` (Pool, market-cap fee tiers) | `quote/pump` — constant product |
 | **pump.fun bonding curve** (6EF8rrec) | `models` (BondingCurve) | `quote/pumpbc` — constant product on virtual reserves |
 
@@ -24,7 +25,7 @@ venues, decoded straight from on-chain account state.
 ```
 models/         on-chain account decoders (discriminator-checked)
 math/           fixed-point primitives — common, dlmm, damm, orca, raydium
-quote/          exact-in swap math — dlmm, damm, orca, raydium, pump, pumpbc
+quote/          exact-in swap math — dlmm, damm, orca, raydium, raycpmm, pump, pumpbc
 soldex.go       unified Quoter over all venues
 ```
 

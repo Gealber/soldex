@@ -113,6 +113,15 @@ func TokenXY(t PoolType, data []byte) (solana.PublicKey, solana.PublicKey, error
 		}
 		tokenX = solana.PublicKeyFromBytes(data[start : start+32])
 		tokenY = solana.PublicKeyFromBytes(data[start+32 : start+64])
+	case PoolTypeRaydiumCPMM:
+		// token_0_mint@160 and token_1_mint@192 (relative to the data after the
+		// 8-byte discriminator) are contiguous.
+		start := 8 + 160
+		if len(data) < start+64 {
+			return tokenX, tokenY, ErrInsufficientData
+		}
+		tokenX = solana.PublicKeyFromBytes(data[start : start+32])
+		tokenY = solana.PublicKeyFromBytes(data[start+32 : start+64])
 	default:
 		return tokenX, tokenY, ErrUnknownPoolType
 	}

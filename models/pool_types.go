@@ -249,6 +249,7 @@ const (
 	PoolTypeDAMM
 	PoolTypeOrca
 	PoolTypeRaydiumCLMM
+	PoolTypeRaydiumCPMM
 )
 
 // String returns the string representation of the pool type
@@ -262,6 +263,8 @@ func (pt PoolType) String() string {
 		return "ORCA"
 	case PoolTypeRaydiumCLMM:
 		return "RAYDIUM_CLMM"
+	case PoolTypeRaydiumCPMM:
+		return "RAYDIUM_CPMM"
 	default:
 		return "UNKNOWN"
 	}
