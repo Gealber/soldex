@@ -86,9 +86,15 @@ func RaydiumCPMM(reserve0, reserve1, tradeFeeRate uint64) Quoter {
 	})
 }
 
-// Pump binds a Pump-AMM constant-product pool by its two vault reserves and the
-// total fee (basis points; compute via models.PumpTotalFeeBps). aToB == sell
-// (base in, quote out); !aToB == buy (quote in, base out).
+// Pump binds a Pump-AMM constant-product pool by its base vault reserve, its EFFECTIVE
+// quote reserve and the total fee (basis points; compute via models.PumpTotalFeeBps).
+// aToB == sell (base in, quote out); !aToB == buy (quote in, base out).
+//
+// quoteReserve is NOT the quote vault balance: newer pools price with additional
+// quote-side reserve held outside the vault, so pass
+// models.PumpPool.EffectiveQuoteReserve(vaultQuoteBalance). Passing the raw vault
+// balance over-predicts a buy by the offset's share of the pool — 5.5% on a 317 SOL
+// pool, 775% on a 2.2 SOL one — which reads as free arbitrage that is not there.
 func Pump(baseReserve, quoteReserve, feeBps uint64) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		if aToB {

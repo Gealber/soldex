@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/gagliardetto/solana-go"
@@ -19,7 +20,8 @@ var PumpPoolDiscriminator = [8]byte{241, 154, 109, 4, 17, 177, 109, 188}
 // Layout (Borsh, after the 8-byte discriminator): pool_bump u8, index u16,
 // creator Pubkey, base_mint Pubkey, quote_mint Pubkey, lp_mint Pubkey,
 // pool_base_token_account Pubkey, pool_quote_token_account Pubkey, lp_supply u64,
-// coin_creator Pubkey, is_mayhem_mode bool, is_cashback_coin bool.
+// coin_creator Pubkey, is_mayhem_mode bool, is_cashback_coin bool, then a u64 at
+// offset 245 (see ExtraQuoteReserve).
 type PumpPool struct {
 	Address               solana.PublicKey
 	BaseMint              solana.PublicKey
@@ -32,6 +34,29 @@ type PumpPool struct {
 	Creator solana.PublicKey
 	// IsCashbackCoin (offset 244) flips the creator fee to the global rate.
 	IsCashbackCoin bool
+	// ExtraQuoteReserve (u64 at offset 245) is quote-side reserve the program prices
+	// with that is NOT held in the quote vault. A quote taken on the vault balance
+	// alone therefore reads the pool as shallower than it is and over-predicts what a
+	// buy returns — measured 2026-07-25 against simulateTransaction at +5.5% on a
+	// 317 SOL pool and +775% on a 2.2 SOL one, since the offset is absolute and the
+	// relative error grows as the pool shrinks. Always price through
+	// EffectiveQuoteReserve, never the raw vault balance.
+	//
+	// Its provenance is NOT established: it is absent (zero) on older pools, present
+	// on newer ones at ~17.58 SOL, near-identical across unrelated pools at any given
+	// moment, and it drifts upward over time. Because it is neither a constant nor a
+	// per-pool invariant it must be read live from the account, not cached or assumed.
+	ExtraQuoteReserve uint64
+}
+
+// EffectiveQuoteReserve is the quote reserve a swap must be quoted against: the pool's
+// quote vault balance plus the offset the program prices with. Mirrors
+// RaydiumCPMMPool.NetReserves — the vault balance alone is never the right input.
+func (p *PumpPool) EffectiveQuoteReserve(vaultQuoteBalance uint64) uint64 {
+	if p == nil {
+		return vaultQuoteBalance
+	}
+	return vaultQuoteBalance + p.ExtraQuoteReserve
 }
 
 // DecodePumpPool decodes a Pump-AMM Pool account.
@@ -46,6 +71,13 @@ func DecodePumpPool(data []byte, address solana.PublicKey) (*PumpPool, error) {
 	if disc != PumpPoolDiscriminator {
 		return nil, fmt.Errorf("%w: got %x, expected %x", ErrInvalidDiscriminator, disc, PumpPoolDiscriminator)
 	}
+	// The offset postdates the original layout, so an account too short to carry it is
+	// decoded as zero rather than rejected — that is exactly how the older cohort reads,
+	// and those pools quote correctly on the vault balance alone.
+	var extraQuote uint64
+	if len(data) >= 253 {
+		extraQuote = binary.LittleEndian.Uint64(data[245:253])
+	}
 	return &PumpPool{
 		Address:               address,
 		BaseMint:              solana.PublicKeyFromBytes(data[43:75]),
@@ -55,5 +87,6 @@ func DecodePumpPool(data []byte, address solana.PublicKey) (*PumpPool, error) {
 		CoinCreator:           solana.PublicKeyFromBytes(data[211:243]),
 		Creator:               solana.PublicKeyFromBytes(data[11:43]),
 		IsCashbackCoin:        data[244] != 0,
+		ExtraQuoteReserve:     extraQuote,
 	}, nil
 }
