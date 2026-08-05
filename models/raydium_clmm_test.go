@@ -175,3 +175,116 @@ func TestRaydiumTickArrayStartIndex(t *testing.T) {
 		t.Fatalf("start(1234,10) = %d, want 1200", got)
 	}
 }
+
+// status, fee_on and dynamic_fee_info sit past the sequentially decoded prefix, so a
+// wrong offset here reads plausible garbage rather than failing — pin them.
+func TestDecodeRaydiumCLMMPoolLateFields(t *testing.T) {
+	data := buildRaydiumPoolData(solana.PublicKey{}, solana.PublicKey{},
+		solana.PublicKey{}, solana.PublicKey{}, solana.PublicKey{})
+	data[raydiumPoolStatusOffset] = 1 << 4 // swap disabled
+	data[raydiumPoolFeeOnOffset] = 2       // Token1Only
+
+	const o = raydiumPoolDynamicFeeOffset
+	binary.LittleEndian.PutUint16(data[o+0:o+2], 30)        // filter_period
+	binary.LittleEndian.PutUint16(data[o+2:o+4], 600)       // decay_period
+	binary.LittleEndian.PutUint16(data[o+4:o+6], 5_000)     // reduction_factor
+	binary.LittleEndian.PutUint32(data[o+6:o+10], 40_000)   // dynamic_fee_control
+	binary.LittleEndian.PutUint32(data[o+10:o+14], 350_000) // max_volatility_accumulator
+	ref := int32(-26483)
+	binary.LittleEndian.PutUint32(data[o+14:o+18], uint32(ref)) // tick_spacing_index_reference
+	binary.LittleEndian.PutUint32(data[o+18:o+22], 111_111)     // volatility_reference
+	binary.LittleEndian.PutUint32(data[o+22:o+26], 222_222)     // volatility_accumulator
+	binary.LittleEndian.PutUint64(data[o+26:o+34], 1_700_000_000)
+
+	pool, err := DecodeRaydiumCLMMPool(data, solana.PublicKey{})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !pool.SwapDisabled() {
+		t.Fatal("status bit4 must read as swap disabled")
+	}
+	if pool.FeeOn != 2 {
+		t.Fatalf("FeeOn = %d, want 2", pool.FeeOn)
+	}
+	// Token1Only: the fee is on token1, which is the input only when buying token0.
+	if pool.IsFeeOnInput(true) {
+		t.Fatal("Token1Only selling token0 must be fee-on-output")
+	}
+	if !pool.IsFeeOnInput(false) {
+		t.Fatal("Token1Only buying token0 must be fee-on-input")
+	}
+	want := RaydiumDynamicFee{
+		FilterPeriod: 30, DecayPeriod: 600, ReductionFactor: 5_000,
+		DynamicFeeControl: 40_000, MaxVolatilityAccumulator: 350_000,
+		TickSpacingIndexReference: -26483, VolatilityReference: 111_111,
+		VolatilityAccumulator: 222_222, LastUpdateTimestamp: 1_700_000_000,
+	}
+	if pool.DynamicFee != want {
+		t.Fatalf("DynamicFee = %+v, want %+v", pool.DynamicFee, want)
+	}
+	if !pool.DynamicFee.Enabled() {
+		t.Fatal("a populated DynamicFeeInfo must read as enabled")
+	}
+}
+
+// A pool with no dynamic fee must read as disabled, not as a fee of zero-ish
+// constants that the quote would then try to apply.
+func TestDecodeRaydiumCLMMPoolNoDynamicFee(t *testing.T) {
+	data := buildRaydiumPoolData(solana.PublicKey{}, solana.PublicKey{},
+		solana.PublicKey{}, solana.PublicKey{}, solana.PublicKey{})
+	pool, err := DecodeRaydiumCLMMPool(data, solana.PublicKey{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool.DynamicFee.Enabled() {
+		t.Fatal("an all-zero DynamicFeeInfo must read as absent")
+	}
+	if !pool.IsFeeOnInput(true) || !pool.IsFeeOnInput(false) {
+		t.Fatal("fee_on = 0 is fee-on-input in both directions")
+	}
+	if pool.SwapDisabled() {
+		t.Fatal("status 0 must not read as disabled")
+	}
+}
+
+// The limit-order fields were carved out of TickState's old padding, so the 168-byte
+// stride is unchanged — but a tick can now be initialized on orders ALONE, and a
+// quote that checks gross liquidity walks straight past it.
+func TestDecodeRaydiumTickLimitOrders(t *testing.T) {
+	pool := solana.MustPublicKeyFromBase58("3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv")
+	const start = int32(-26520)
+	data := buildRaydiumTickArrayData(pool, start)
+
+	// tick[2]: no liquidity at all, only resting orders.
+	const o = 44 + 2*168
+	tickIndex := start + 2
+	binary.LittleEndian.PutUint32(data[o:o+4], uint32(tickIndex))
+	binary.LittleEndian.PutUint64(data[o+116:o+124], 7)         // order_phase
+	binary.LittleEndian.PutUint64(data[o+124:o+132], 4_000_000) // orders_amount
+	binary.LittleEndian.PutUint64(data[o+132:o+140], 1_500_000) // part_filled_orders_remaining
+
+	array, err := DecodeRaydiumTickArray(data, solana.PublicKey{})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	tick := array.Ticks[2]
+	if tick.Tick != tickIndex {
+		t.Fatalf("stride broken: tick = %d, want %d", tick.Tick, tickIndex)
+	}
+	if tick.OrderPhase != 7 || tick.OrdersAmount != 4_000_000 || tick.PartFilledOrdersLeft != 1_500_000 {
+		t.Fatalf("limit-order fields decoded wrong: %+v", tick)
+	}
+	if got := tick.LimitOrderUnfilled(); got != 5_500_000 {
+		t.Fatalf("LimitOrderUnfilled = %d, want 5500000", got)
+	}
+	if tick.HasLiquidity() {
+		t.Fatal("this tick has no gross liquidity")
+	}
+	if !tick.Initialized() {
+		t.Fatal("a tick holding only limit orders must still read as initialized")
+	}
+	// The liquidity-bearing tick built by the fixture must be unaffected.
+	if !array.Ticks[0].HasLiquidity() || array.Ticks[0].HasLimitOrders() {
+		t.Fatalf("liquidity tick misdecoded: %+v", array.Ticks[0])
+	}
+}

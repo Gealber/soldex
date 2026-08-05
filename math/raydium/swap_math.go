@@ -20,16 +20,24 @@ type SwapStep struct {
 	FeeAmount     *big.Int
 }
 
-// ComputeSwapStep mirrors swap_math::compute_swap for the exact-input,
-// fee-on-input path (is_base_input = is_fee_on_input = true) — the standard
-// Raydium CLMM swap (pool fee_on = FromInput). zeroForOne sells token_0 for
-// token_1 (price decreasing). Pools configured with token-only fee collection
-// (fee_on 1/2) are not modelled in this path.
-func ComputeSwapStep(sqrtCurrent, sqrtTarget, liquidity *big.Int, amountRemaining uint64, feeRate uint32, zeroForOne bool) SwapStep {
-	// Take the fee off the gross input before moving the price.
+// ComputeSwapStep mirrors swap_math::compute_swap for the exact-input path
+// (is_base_input = true). isFeeOnInput selects the pool's fee_on behaviour: true
+// takes the fee from the input before the price moves (fee_on = FromInput), false
+// takes it out of the gross OUTPUT afterwards (fee_on = Token0Only/Token1Only for
+// this direction). zeroForOne sells token_0 for token_1 (price decreasing).
+//
+// With fee-on-output the caller draws only AmountIn from the remaining input —
+// FeeAmount has already been deducted from AmountOut, so adding it again would
+// charge the trader twice.
+func ComputeSwapStep(sqrtCurrent, sqrtTarget, liquidity *big.Int, amountRemaining uint64, feeRate uint32, zeroForOne, isFeeOnInput bool) SwapStep {
+	// Fee-on-input takes the fee off the gross input before moving the price;
+	// fee-on-output moves the price with the whole input.
 	remaining := new(big.Int).SetUint64(amountRemaining)
-	amountForCalc := new(big.Int).Mul(remaining, big.NewInt(int64(FeeRateDenominator-feeRate)))
-	amountForCalc.Quo(amountForCalc, big.NewInt(FeeRateDenominator))
+	amountForCalc := new(big.Int).Set(remaining)
+	if isFeeOnInput {
+		amountForCalc.Mul(remaining, big.NewInt(int64(FeeRateDenominator-feeRate)))
+		amountForCalc.Quo(amountForCalc, big.NewInt(FeeRateDenominator))
+	}
 
 	// Input needed to reach the target tick (round up); nil if it exceeds u64,
 	// matching calculate_amount_in_range returning None on MaxTokenOverflow.
@@ -63,13 +71,26 @@ func ComputeSwapStep(sqrtCurrent, sqrtTarget, liquidity *big.Int, amountRemainin
 	}
 
 	var fee *big.Int
-	if !max {
-		// Didn't reach the target: the user pays all the remaining input, the
-		// part beyond amount_in is the fee.
-		fee = new(big.Int).Sub(remaining, amountIn)
+	if isFeeOnInput {
+		if !max {
+			// Didn't reach the target: the user pays all the remaining input, the
+			// part beyond amount_in is the fee.
+			fee = new(big.Int).Sub(remaining, amountIn)
+		} else {
+			num := new(big.Int).Mul(amountIn, big.NewInt(int64(feeRate)))
+			fee = ceilDiv(num, big.NewInt(int64(FeeRateDenominator-feeRate)))
+		}
 	} else {
-		num := new(big.Int).Mul(amountIn, big.NewInt(int64(feeRate)))
-		fee = ceilDiv(num, big.NewInt(int64(FeeRateDenominator-feeRate)))
+		// Fee out of the gross output; the trader receives the remainder.
+		num := new(big.Int).Mul(amountOut, big.NewInt(int64(feeRate)))
+		fee = ceilDiv(num, big.NewInt(FeeRateDenominator))
+		amountOut = new(big.Int).Sub(amountOut, fee)
+		if !max {
+			// A partial step leaves sub-unit input dust that fee-on-input would have
+			// folded into the fee. Fee-on-output cannot, and leaving it unconsumed
+			// stalls the loop, so the pool takes the whole remaining input.
+			amountIn = new(big.Int).Set(remaining)
+		}
 	}
 
 	return SwapStep{SqrtPriceNext: next, AmountIn: amountIn, AmountOut: amountOut, FeeAmount: fee}

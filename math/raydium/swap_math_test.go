@@ -13,7 +13,7 @@ func TestComputeSwapStepConservationWhenTargetNotReached(t *testing.T) {
 	target := mustBig("4000000000000000000") // far below: unreachable with a small input
 	liquidity := big.NewInt(1_000_000_000_000)
 
-	step := ComputeSwapStep(current, target, liquidity, 1_000_000, 2500, true)
+	step := ComputeSwapStep(current, target, liquidity, 1_000_000, 2500, true, true)
 
 	consumed := new(big.Int).Add(step.AmountIn, step.FeeAmount)
 	if consumed.Uint64() != 1_000_000 {
@@ -34,7 +34,7 @@ func TestComputeSwapStepReachesTarget(t *testing.T) {
 	target := new(big.Int).Sub(current, big.NewInt(100_000))
 	liquidity := big.NewInt(1_000_000_000_000)
 
-	step := ComputeSwapStep(current, target, liquidity, 1_000_000_000, 2500, true)
+	step := ComputeSwapStep(current, target, liquidity, 1_000_000_000, 2500, true, true)
 
 	if step.SqrtPriceNext.Cmp(target) != 0 {
 		t.Fatalf("next %s should equal target %s", step.SqrtPriceNext, target)
@@ -51,7 +51,7 @@ func TestComputeSwapStepOneForZeroPriceUp(t *testing.T) {
 	target := new(big.Int).Add(current, mustBig("900000000000000000"))
 	liquidity := big.NewInt(1_000_000_000_000)
 
-	step := ComputeSwapStep(current, target, liquidity, 1_000_000, 2500, false)
+	step := ComputeSwapStep(current, target, liquidity, 1_000_000, 2500, false, true)
 
 	if step.SqrtPriceNext.Cmp(current) <= 0 {
 		t.Fatalf("oneForZero price should increase: next %s <= current %s", step.SqrtPriceNext, current)

@@ -150,3 +150,46 @@ func TickFromSqrtPrice(sqrtPrice *big.Int) int32 {
 	}
 	return tickLow
 }
+
+// PriceFromSqrtPrice converts a Q64.64 sqrt-price to its Q64.64 price
+// (price = sqrt_price^2 / 2^64), mirroring get_price_from_sqrt_price. roundUp
+// selects the rounding direction the caller's side of the trade requires.
+func PriceFromSqrtPrice(sqrtPrice *big.Int, roundUp bool) *big.Int {
+	prod := new(big.Int).Mul(sqrtPrice, sqrtPrice)
+	if roundUp {
+		prod.Add(prod, new(big.Int).Sub(q64, big.NewInt(1)))
+	}
+	return prod.Rsh(prod, 64)
+}
+
+// PriceAtTick is PriceFromSqrtPrice at the tick's sqrt-price.
+func PriceAtTick(tick int32, roundUp bool) *big.Int {
+	return PriceFromSqrtPrice(SqrtPriceFromTick(tick), roundUp)
+}
+
+// LimitOrderOutput converts an input amount into the limit-order token at a fixed
+// tick price, rounded DOWN — mirrors get_limit_order_output_with_price. price is
+// the Q64.64 token_0 price at the tick. A resting order fills at that one price,
+// not along the curve, which is why this is a plain multiply rather than a swap step.
+func LimitOrderOutput(amountIn, price *big.Int, zeroForOne bool) *big.Int {
+	if zeroForOne {
+		return new(big.Int).Quo(new(big.Int).Mul(amountIn, price), q64)
+	}
+	if price.Sign() == 0 {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Quo(new(big.Int).Mul(amountIn, q64), price)
+}
+
+// LimitOrderInput is the inverse of LimitOrderOutput, rounded UP — mirrors
+// get_limit_order_input_with_price. Note the caller passes the ORDER's direction,
+// which is the opposite of the swap's.
+func LimitOrderInput(amountOut, price *big.Int, zeroForOne bool) *big.Int {
+	if zeroForOne {
+		return ceilDiv(new(big.Int).Mul(amountOut, price), q64)
+	}
+	if price.Sign() == 0 {
+		return big.NewInt(0)
+	}
+	return ceilDiv(new(big.Int).Mul(amountOut, q64), price)
+}

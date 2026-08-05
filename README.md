@@ -15,10 +15,34 @@ venues, decoded straight from on-chain account state.
 | **Meteora DLMM** | `models` (LbPair, BinArray, bitmap) | `quote/dlmm` — bin-crossing, base+variable fee |
 | **Meteora DAMM v2** (cp-amm) | `models` (Pool) | `quote/damm` — concentrated + compounding, dynamic fee |
 | **Orca Whirlpool** | `models` (Whirlpool, oracle, fixed & dynamic tick arrays) | `quote/orca` — adaptive-fee port |
-| **Raydium CLMM** | `models` (PoolState, tick arrays) | `quote/raydium` |
+| **Raydium CLMM** | `models` (PoolState, tick arrays, dynamic-fee info) | `quote/raydium` — limit orders, dynamic fee, fee_on |
 | **Raydium CP-Swap** (CPMMoo8L) | `models` (PoolState, AmmConfig) | `quote/raycpmm` — constant product, fee-on-input |
 | **Pump-AMM** (pAMMBay) | `models` (Pool, market-cap fee tiers) | `quote/pump` — constant product |
 | **pump.fun bonding curve** (6EF8rrec) | `models` (BondingCurve) | `quote/pumpbc` — constant product on virtual reserves |
+
+## Raydium CLMM: limit orders, dynamic fee, fee_on
+
+The CLMM program was upgraded on 2026-07-31 with three things that change the amount out,
+all of which `quote/raydium` now models:
+
+- **Limit orders** resting at an initialized tick, filled at the tick price before the
+  swap crosses it. A tick can be initialized on orders *alone*, so `RaydiumTick.Initialized`
+  reports liquidity **or** orders — checking gross liquidity walks straight past such a tick.
+- **Dynamic fee** — a volatility accumulator added to the AmmConfig fee
+  (`total = base_fee_rate + dynamic_fee_rate`, capped at 10%). The swap steps one
+  tick-spacing group at a time so the fee can rise as the price travels, which is why
+  `SwapPool.BlockTimestamp` matters: a stale timestamp under-decays the reference and
+  over-quotes the fee.
+- **`fee_on`** (0 FromInput, 1 Token0Only, 2 Token1Only) — for one direction the fee comes
+  out of the **output**. On a curve with real price impact that is strictly worse for the
+  trader than the same rate on the input.
+
+Measured on chain 2026-08-05: of 178,353 pools, **547** carry a non-zero `dynamic_fee_info`,
+**794** have `fee_on != 0`, and **354** `LimitOrderState` accounts exist. Rare — but a
+fee-on-output pool is exactly the shape that reads as free arbitrage if you ignore it.
+
+`QuoteExactIn` also refuses a pool whose `status` bit4 disables swaps, rather than returning
+a tradable-looking number for a swap that cannot land.
 
 ## Layout
 

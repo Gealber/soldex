@@ -54,6 +54,11 @@ func Orca(pool orca.SwapPool, ticks orca.TickProvider) Quoter {
 }
 
 // Raydium binds a Raydium CLMM pool with its tick provider. aToB == zeroForOne.
+//
+// Populate SwapPool.FeeOn, Status, DynamicFee and BlockTimestamp from the decoded pool,
+// not just the price and liquidity — the deployed program fills limit orders, charges a
+// volatility-driven fee on top of the AmmConfig rate, and can take that fee out of the
+// OUTPUT. Leaving them zero quotes the pre-2026-07-31 program.
 func Raydium(pool raydium.SwapPool, ticks raydium.TickProvider) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		return raydium.QuoteExactIn(pool, aToB, amountIn, ticks)
