@@ -22,6 +22,7 @@ var (
 	ErrInsufficientData     = errors.New("insufficient data to decode pool")
 	ErrInvalidDiscriminator = errors.New("invalid account discriminator")
 	ErrUnknownPoolType      = errors.New("unknown pool type")
+	ErrValueOutOfRange      = errors.New("field value out of range for its Go type")
 )
 
 // DecodeDLMMPool decodes a DLMM pool from raw account bytes received from Yellowstone.

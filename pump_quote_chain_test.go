@@ -11,7 +11,7 @@ import (
 // user_quote_amount_in, the amount that actually reaches the curve) with the base it paid out.
 // Because the input is already net of fees, feeBps is 0 here and the vector isolates the reserves.
 //
-// The pools differ only in models.PumpPool.ExtraQuoteReserve: a quote-side reserve the program
+// The pools differ only in models.PumpPool.VirtualQuoteReserves: a quote-side reserve the program
 // prices with that is NOT held in the quote vault. Quoting on the vault balance alone reads the
 // pool as far shallower than it is, and over-predicts the base a buy returns by an amount that
 // grows as the pool shrinks — +5.5% at 317 SOL of quote, +775% at 2.2 SOL.
@@ -46,10 +46,10 @@ var pumpChainFills = []struct {
 // integer equality is not achievable and would make the test flap.
 const pumpQuoteTolerance = 0.0005
 
-func TestPumpQuoteMatchesChainWithExtraQuoteReserve(t *testing.T) {
+func TestPumpQuoteMatchesChainWithVirtualQuoteReserves(t *testing.T) {
 	for _, v := range pumpChainFills {
 		t.Run(v.name, func(t *testing.T) {
-			pool := &models.PumpPool{ExtraQuoteReserve: v.extraQuoteReserve}
+			pool := &models.PumpPool{VirtualQuoteReserves: int64(v.extraQuoteReserve)}
 			out, err := Pump(v.base, pool.EffectiveQuoteReserve(v.quote), 0).QuoteExactIn(v.curveIn, false)
 			if err != nil {
 				t.Fatalf("quote: %v", err)
@@ -67,9 +67,9 @@ func TestPumpQuoteMatchesChainWithExtraQuoteReserve(t *testing.T) {
 // The offset only ever adds quote-side depth, so omitting it can only ever over-predict a buy.
 // This pins the direction: a silent regression that drops the field manufactures profit rather
 // than hiding it, which is why it produced phantom arbitrage rather than missed trades.
-func TestPumpExtraQuoteReserveOnlyReducesBuyOutput(t *testing.T) {
+func TestPumpVirtualQuoteReservesOnlyReduceBuyOutput(t *testing.T) {
 	v := pumpChainFills[1] // the 2.2 SOL pool, where the offset dominates
-	pool := &models.PumpPool{ExtraQuoteReserve: v.extraQuoteReserve}
+	pool := &models.PumpPool{VirtualQuoteReserves: int64(v.extraQuoteReserve)}
 
 	withOffset, _ := Pump(v.base, pool.EffectiveQuoteReserve(v.quote), 0).QuoteExactIn(v.curveIn, false)
 	vaultOnly, _ := Pump(v.base, v.quote, 0).QuoteExactIn(v.curveIn, false)

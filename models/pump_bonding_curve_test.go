@@ -53,3 +53,53 @@ func TestDecodeBondingCurveShort(t *testing.T) {
 		t.Fatal("expected insufficient-data error")
 	}
 }
+
+// bondingCurveAccount builds a curve account truncated to size, so each live cohort can be
+// decoded from the same bytes.
+func bondingCurveAccount(t *testing.T, size int, quoteMint solana.PublicKey) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(bondingCurveV1B64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size > len(data) {
+		t.Fatalf("size %d exceeds the golden account (%d bytes)", size, len(data))
+	}
+	if size >= bondingCurveQuoteMintEnd {
+		copy(data[83:115], quoteMint[:])
+	}
+	return data[:size]
+}
+
+// The account has grown twice and all three cohorts are still live, so a curve too short to
+// carry the newer fields must decode rather than fail.
+func TestDecodeBondingCurveEveryLiveCohort(t *testing.T) {
+	for _, size := range []int{81, 83, 115, 150} {
+		bc, err := DecodeBondingCurve(bondingCurveAccount(t, size, solana.PublicKey{}), solana.PublicKey{})
+		if err != nil {
+			t.Fatalf("size %d: decode: %v", size, err)
+		}
+		if bc.VirtualSolReserves != 30590314250 {
+			t.Fatalf("size %d: virtual_sol_reserves = %d", size, bc.VirtualSolReserves)
+		}
+		if !bc.IsSOLQuoted() {
+			t.Fatalf("size %d: a curve with no quote_mint must read as SOL-quoted", size)
+		}
+	}
+}
+
+// A non-zero quote_mint means the *SolReserves fields are not lamports. Nothing else in the
+// struct says so, so IsSOLQuoted is the only guard a caller has against pricing them as SOL.
+func TestDecodeBondingCurveNonSOLQuoteMint(t *testing.T) {
+	usdc := solana.MustPublicKeyFromBase58("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+	bc, err := DecodeBondingCurve(bondingCurveAccount(t, 115, usdc), solana.PublicKey{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bc.QuoteMint != usdc {
+		t.Fatalf("QuoteMint = %s, want %s", bc.QuoteMint, usdc)
+	}
+	if bc.IsSOLQuoted() {
+		t.Fatal("a curve quoted in USDC must not report as SOL-quoted")
+	}
+}
