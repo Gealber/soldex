@@ -306,22 +306,36 @@ func FromBondingCurve(curve *models.BondingCurve, feeBps uint64) (Quoter, error)
 	return PumpBondingCurve(curve.VirtualTokenReserves, curve.VirtualSolReserves, feeBps), nil
 }
 
+// FluxBeamSide is one side of a FluxBeam pool: its vault token-account balance
+// and the Token-2022 transfer fee that side's mint charges.
+//
+// TransferFee is nil when the mint charges nothing, which is the common case and
+// every classic-Token mint. It is a field rather than an option because the
+// program deducts it and a quote that skips it is wrong by whole percent.
+type FluxBeamSide struct {
+	Reserve     uint64
+	TransferFee *models.TransferFeeConfig
+}
+
 // FromFluxBeamPool builds a Quoter for a FluxBeam pool.
 //
-// The two vault token-account balances are the caller's to fetch; unlike the
-// Raydium venues nothing is netted out of them, since FluxBeam tracks no fee
-// accrual inside the vaults.
+// The vault balances are the caller's to fetch; unlike the Raydium venues
+// nothing is netted out of them, since FluxBeam tracks no fee accrual inside the
+// vaults. The two sides can be under different token programs, so their transfer
+// fees are read per side.
+//
+// epoch is the current epoch, which selects between a mint's staged fee settings.
 //
 // A pool whose curve this package does not model is refused at quote time rather
 // than here, because the curve is the only thing that makes it unquotable and
 // the error says which curve it was.
-func FromFluxBeamPool(pool *models.FluxBeamPool, reserveA, reserveB uint64) (Quoter, error) {
+func FromFluxBeamPool(pool *models.FluxBeamPool, a, b FluxBeamSide, epoch uint64) (Quoter, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("%w: nil FluxBeam pool", ErrPoolNotQuotable)
 	}
-	if reserveA == 0 || reserveB == 0 {
+	if a.Reserve == 0 || b.Reserve == 0 {
 		return nil, fmt.Errorf("%w: FluxBeam pool has an empty side", ErrPoolNotQuotable)
 	}
 
-	return FluxBeam(reserveA, reserveB, pool.CurveType, pool.Fees), nil
+	return FluxBeam(a, b, pool.CurveType, pool.Fees, epoch), nil
 }

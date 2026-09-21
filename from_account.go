@@ -62,6 +62,12 @@ type Aux struct {
 
 	// VaultA and VaultB are the FluxBeam vault token-account balances.
 	VaultA, VaultB uint64
+	// TransferFeeA and TransferFeeB are the Token-2022 transfer fees of the
+	// FluxBeam pool's two mints, nil where a mint charges none. The program
+	// deducts them around the curve, so a quote without them is wrong.
+	TransferFeeA, TransferFeeB *models.TransferFeeConfig
+	// Epoch selects between a mint's staged transfer fee settings.
+	Epoch uint64
 
 	// BaseSupply is the Pump base mint supply, for the market-cap fee tier.
 	BaseSupply uint64
@@ -130,7 +136,10 @@ func FromAccount(owner solana.PublicKey, data []byte, aux Aux) (Quoter, error) {
 		if err != nil {
 			return nil, err
 		}
-		return FromFluxBeamPool(pool, aux.VaultA, aux.VaultB)
+		return FromFluxBeamPool(pool,
+			FluxBeamSide{Reserve: aux.VaultA, TransferFee: aux.TransferFeeA},
+			FluxBeamSide{Reserve: aux.VaultB, TransferFee: aux.TransferFeeB},
+			aux.Epoch)
 
 	case PumpBondingProgramID:
 		curve, err := models.DecodeBondingCurve(data, addr)

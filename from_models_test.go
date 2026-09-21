@@ -707,7 +707,7 @@ func fluxBeamModel(curve uint8) *models.FluxBeamPool {
 func TestFromFluxBeamPoolAppliesTheFees(t *testing.T) {
 	const rA, rB, in = uint64(1_000_000_000), uint64(1_000_000_000), uint64(10_000_000)
 
-	q, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), rA, rB)
+	q, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), FluxBeamSide{Reserve: rA}, FluxBeamSide{Reserve: rB}, 0)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -718,7 +718,7 @@ func TestFromFluxBeamPoolAppliesTheFees(t *testing.T) {
 
 	free := fluxBeamModel(models.FluxBeamCurveConstantProduct)
 	free.Fees = models.FluxBeamFees{}
-	qFree, err := FromFluxBeamPool(free, rA, rB)
+	qFree, err := FromFluxBeamPool(free, FluxBeamSide{Reserve: rA}, FluxBeamSide{Reserve: rB}, 0)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -731,7 +731,7 @@ func TestFromFluxBeamPoolAppliesTheFees(t *testing.T) {
 	}
 
 	// Both directions quote, and asymmetric reserves price differently.
-	q2, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), rA, rB*2)
+	q2, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), FluxBeamSide{Reserve: rA}, FluxBeamSide{Reserve: rB * 2}, 0)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -743,19 +743,125 @@ func TestFromFluxBeamPoolAppliesTheFees(t *testing.T) {
 }
 
 func TestFromFluxBeamPoolRefusals(t *testing.T) {
-	if _, err := FromFluxBeamPool(nil, 1, 1); !errors.Is(err, ErrPoolNotQuotable) {
+	if _, err := FromFluxBeamPool(nil, FluxBeamSide{Reserve: 1}, FluxBeamSide{Reserve: 1}, 0); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatal("nil pool must be refused")
 	}
-	if _, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), 0, 1_000); !errors.Is(err, ErrPoolNotQuotable) {
+	if _, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), FluxBeamSide{Reserve: 0}, FluxBeamSide{Reserve: 1_000}, 0); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatal("an empty side must be refused")
 	}
 
 	// An unmodelled curve is refused at quote time, with the curve in the error.
-	q, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantPrice), 1_000_000, 1_000_000)
+	q, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantPrice), FluxBeamSide{Reserve: 1_000_000}, FluxBeamSide{Reserve: 1_000_000}, 0)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
 	if _, err := q.QuoteExactIn(1_000, true); !errors.Is(err, fluxbeam.ErrUnsupportedCurve) {
 		t.Fatalf("err = %v, want ErrUnsupportedCurve", err)
+	}
+}
+
+// A Token-2022 transfer fee is charged on the way in and on the way out, and the
+// program compares minimum_amount_out against the net figure. Both sides are
+// varied one at a time so each assertion moves one thing.
+func TestFromFluxBeamPoolAppliesTransferFees(t *testing.T) {
+	const rA, rB, in = uint64(1_000_000_000_000), uint64(1_000_000_000_000), uint64(10_000_000)
+
+	// 300 bps, the most common setting on the live pools, uncapped.
+	fee := &models.TransferFeeConfig{Newer: models.TransferFee{MaximumFee: ^uint64(0), BasisPoints: 300}}
+
+	pool := fluxBeamModel(models.FluxBeamCurveConstantProduct)
+	plain, err := FromFluxBeamPool(pool, FluxBeamSide{Reserve: rA}, FluxBeamSide{Reserve: rB}, 0)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	base, err := plain.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	// Fee on the OUTPUT side only: the curve is untouched and 3% of the output
+	// is withheld, so the answer is the plain one less its own fee.
+	outFee, err := FromFluxBeamPool(pool, FluxBeamSide{Reserve: rA}, FluxBeamSide{Reserve: rB, TransferFee: fee}, 0)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	got, err := outFee.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if want := base - fee.Newer.Fee(base); got != want {
+		t.Fatalf("output-side fee: quote = %d, want %d (plain %d)", got, want, base)
+	}
+	if got >= base {
+		t.Fatalf("a 3%% transfer fee did not reduce the output: %d vs %d", got, base)
+	}
+
+	// Fee on the INPUT side only: the curve sees 3% less input.
+	inFee, err := FromFluxBeamPool(pool, FluxBeamSide{Reserve: rA, TransferFee: fee}, FluxBeamSide{Reserve: rB}, 0)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	got, err = inFee.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	want, err := plain.QuoteExactIn(in-fee.Newer.Fee(in), true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if got != want {
+		t.Fatalf("input-side fee: quote = %d, want %d", got, want)
+	}
+	if got >= base {
+		t.Fatalf("a 3%% transfer fee on the input did not reduce the output: %d vs %d", got, base)
+	}
+}
+
+// The fee follows the direction, not the side. With equal reserves, swapping
+// B to A through a pool that charges on A is the mirror of swapping A to B
+// through one that charges on B: in both the input side charges and the output
+// side does not, so the two must return the same number.
+//
+// A quoter that pinned the fee to side A, or applied it to the wrong leg, breaks
+// this identity.
+func TestFromFluxBeamPoolTransferFeesFollowTheDirection(t *testing.T) {
+	const reserve, in = uint64(1_000_000_000_000), uint64(10_000_000)
+
+	fee := &models.TransferFeeConfig{Newer: models.TransferFee{MaximumFee: ^uint64(0), BasisPoints: 300}}
+	pool := fluxBeamModel(models.FluxBeamCurveConstantProduct)
+
+	chargesA, err := FromFluxBeamPool(pool, FluxBeamSide{Reserve: reserve, TransferFee: fee}, FluxBeamSide{Reserve: reserve}, 0)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	chargesB, err := FromFluxBeamPool(pool, FluxBeamSide{Reserve: reserve}, FluxBeamSide{Reserve: reserve, TransferFee: fee}, 0)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	bToA, err := chargesA.QuoteExactIn(in, false)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	aToB, err := chargesB.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if bToA != aToB {
+		t.Fatalf("mirrored quotes differ: charging A on B->A gave %d, charging B on A->B gave %d", bToA, aToB)
+	}
+
+	// And the fee is doing something: the same swap with neither side charging
+	// returns more.
+	free, err := FromFluxBeamPool(pool, FluxBeamSide{Reserve: reserve}, FluxBeamSide{Reserve: reserve}, 0)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	plain, err := free.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if aToB >= plain {
+		t.Fatalf("transfer fee did not reduce the output: %d vs %d", aToB, plain)
 	}
 }

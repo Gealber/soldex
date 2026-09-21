@@ -45,7 +45,7 @@ func fluxBeamVectorPool(t *testing.T) *models.FluxBeamPool {
 }
 
 func TestFluxBeamQuoteMatchesChain(t *testing.T) {
-	q, err := FromFluxBeamPool(fluxBeamVectorPool(t), fluxBeamVectorReserveIn, fluxBeamVectorReserveOut)
+	q, err := FromFluxBeamPool(fluxBeamVectorPool(t), FluxBeamSide{Reserve: fluxBeamVectorReserveIn}, FluxBeamSide{Reserve: fluxBeamVectorReserveOut}, 0)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -67,7 +67,7 @@ func TestFluxBeamQuoteMatchesChain(t *testing.T) {
 func TestFluxBeamChainVectorOwnerFeeIsLoadBearing(t *testing.T) {
 	pool := fluxBeamVectorPool(t)
 
-	full, err := FromFluxBeamPool(pool, fluxBeamVectorReserveIn, fluxBeamVectorReserveOut)
+	full, err := FromFluxBeamPool(pool, FluxBeamSide{Reserve: fluxBeamVectorReserveIn}, FluxBeamSide{Reserve: fluxBeamVectorReserveOut}, 0)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -78,7 +78,7 @@ func TestFluxBeamChainVectorOwnerFeeIsLoadBearing(t *testing.T) {
 
 	noOwner := *pool
 	noOwner.Fees.OwnerTradeFeeNumerator = 0
-	q, err := FromFluxBeamPool(&noOwner, fluxBeamVectorReserveIn, fluxBeamVectorReserveOut)
+	q, err := FromFluxBeamPool(&noOwner, FluxBeamSide{Reserve: fluxBeamVectorReserveIn}, FluxBeamSide{Reserve: fluxBeamVectorReserveOut}, 0)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}

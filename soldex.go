@@ -170,17 +170,36 @@ func DAMMCompounding(
 	})
 }
 
-// FluxBeam binds a FluxBeam constant-product pool by its two vault token-account
-// balances and its fees. aToB swaps token A in for token B out.
+// FluxBeam binds a FluxBeam constant-product pool by its two sides and its fees.
+// aToB swaps token A in for token B out.
 //
-// The fee is the pool's own: FluxBeam pools carry arbitrary creator-set fees, and
-// BOTH the trade and owner trade fee come off the input.
-func FluxBeam(reserveA, reserveB uint64, curveType uint8, fees models.FluxBeamFees) Quoter {
+// The pool fee is the pool's own: FluxBeam pools carry arbitrary creator-set
+// fees, and BOTH the trade and owner trade fee come off the input.
+//
+// A Token-2022 transfer fee is charged twice around that, exactly as the program
+// does it: the source mint's fee comes off the input before the curve sees it,
+// and the destination mint's fee comes off the output. The result is what the
+// taker receives, which is also what the program compares to minimum_amount_out.
+func FluxBeam(a, b FluxBeamSide, curveType uint8, fees models.FluxBeamFees, epoch uint64) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
-		if aToB {
-			return fluxbeam.QuoteExactIn(curveType, reserveA, reserveB, amountIn, fees)
+		in, out := a, b
+		if !aToB {
+			in, out = b, a
 		}
 
-		return fluxbeam.QuoteExactIn(curveType, reserveB, reserveA, amountIn, fees)
+		if in.TransferFee != nil {
+			amountIn = in.TransferFee.EpochFee(epoch).PostFeeAmount(amountIn)
+		}
+
+		amountOut, err := fluxbeam.QuoteExactIn(curveType, in.Reserve, out.Reserve, amountIn, fees)
+		if err != nil {
+			return 0, err
+		}
+
+		if out.TransferFee != nil {
+			amountOut = out.TransferFee.EpochFee(epoch).PostFeeAmount(amountOut)
+		}
+
+		return amountOut, nil
 	})
 }
