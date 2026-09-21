@@ -44,17 +44,30 @@ type PumpPool struct {
 	// pool shrinks. Always price through EffectiveQuoteReserve, never the raw vault
 	// balance.
 	//
-	// It is absent (zero) on every cohort below 261 bytes, present on the newest at
-	// ~17.58 SOL, near-identical across unrelated pools at any given moment, and it
-	// drifts upward over time — neither a constant nor a per-pool invariant, so it
-	// must be read live from the account, not cached or assumed.
+	// It is absent (zero) on every cohort below 261 bytes. Where present it
+	// clusters tightly near 17.6 SOL, but the tails are wide (measured 0.003 to
+	// 47,043), and it drifts upward over time. It is neither a constant nor a
+	// per-pool invariant, so read it live from the account rather than caching or
+	// assuming it.
 	//
 	// The on-chain type is SIGNED, so the pool can in principle price against LESS
-	// than its vault balance. No live pool held a negative value when this was
-	// written (4,982 of 4,982 positive on 2026-08-05); the sign is honoured anyway
-	// rather than assumed away, because reading it unsigned turns the first negative
-	// value into ~1.8e19 lamports of imaginary depth.
+	// than its vault balance. No live pool has held a negative value, but the sign
+	// is honoured rather than assumed away: reading it unsigned would turn the
+	// first negative value into ~1.8e19 lamports of imaginary depth.
 	VirtualQuoteReserves int64
+
+	// CreatorFeeBps (u64 at offset 261) is a PER-POOL override of the creator fee.
+	// When non-zero it REPLACES the schedule's creator component rather than adding
+	// to it, capped by the global MaxConfigurableCreatorFeeBps and honoured only
+	// while the global CreatorFeeConfigurable flag is set. Only a few hundred pools
+	// carry one, but they run as high as 3%, far too large to ignore there.
+	CreatorFeeBps uint64
+	// CanEditCreatorFee (offset 269) reports whether the creator may still change
+	// CreatorFeeBps.
+	CanEditCreatorFee bool
+	// IsHolderReward (offset 270) redirects the creator fee to token holders. It
+	// REDIRECTS rather than adds, so a quote must not treat it as an extra fee.
+	IsHolderReward bool
 }
 
 // EffectiveQuoteReserve is the quote reserve a swap must be quoted against: the pool's
@@ -81,20 +94,30 @@ func (p *PumpPool) EffectiveQuoteReserve(vaultQuoteBalance uint64) uint64 {
 	return vaultQuoteBalance + virtual
 }
 
-// Pump-AMM Pool account sizes live on chain (counted 2026-08-05). The layout has been
+// Pump-AMM Pool account sizes seen live on chain. The layout has been
 // appended to three times and EVERY cohort is still live, so a field the account is
 // too short to carry decodes as its zero value instead of failing the whole account —
 // rejecting short accounts dropped 110,317 of the 213,534 pools on chain.
 const (
 	// pumpPoolMinLen covers through lp_supply — every mint and vault a swap needs.
-	pumpPoolMinLen = 211 // 37,096 pools: no coin_creator
+	pumpPoolMinLen = 211
 	// pumpPoolCoinCreatorEnd is the offset past coin_creator.
-	pumpPoolCoinCreatorEnd = 243 // 73,221 pools: coin_creator, no flags
+	pumpPoolCoinCreatorEnd = 243
 	// pumpPoolFlagsEnd is the offset past is_mayhem_mode and is_cashback_coin.
-	pumpPoolFlagsEnd = 245 // 98,235 pools: flags, no virtual reserve
+	pumpPoolFlagsEnd = 245
 	// pumpPoolVirtualQuoteEnd is the offset past virtual_quote_reserves (i128).
-	pumpPoolVirtualQuoteEnd = 261 // 4,982 pools: the full layout
+	pumpPoolVirtualQuoteEnd = 261
+	// pumpPoolCreatorFeeEnd is the offset past creator_fee_bps (u64).
+	pumpPoolCreatorFeeEnd = 269
+	// pumpPoolCanEditEnd is the offset past can_edit_creator_fee.
+	pumpPoolCanEditEnd = 270
+	// pumpPoolHolderRewardEnd is the offset past is_holder_reward.
+	pumpPoolHolderRewardEnd = 271
 )
+
+// Live sizes span 211, 243, 244, 245, 261, 270, 271, 300 and 301, and every
+// cohort is still in use — so a field the account is too short to carry decodes
+// as its zero value rather than failing the whole account.
 
 // DecodePumpPool decodes a Pump-AMM Pool account.
 func DecodePumpPool(data []byte, address solana.PublicKey) (*PumpPool, error) {
@@ -126,6 +149,15 @@ func DecodePumpPool(data []byte, address solana.PublicKey) (*PumpPool, error) {
 			return nil, fmt.Errorf("pump pool %s virtual_quote_reserves: %w", address, err)
 		}
 		pool.VirtualQuoteReserves = virtual
+	}
+	if len(data) >= pumpPoolCreatorFeeEnd {
+		pool.CreatorFeeBps = binary.LittleEndian.Uint64(data[261:269])
+	}
+	if len(data) >= pumpPoolCanEditEnd {
+		pool.CanEditCreatorFee = data[269] != 0
+	}
+	if len(data) >= pumpPoolHolderRewardEnd {
+		pool.IsHolderReward = data[270] != 0
 	}
 	return pool, nil
 }

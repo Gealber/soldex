@@ -56,9 +56,17 @@ type BondingCurve struct {
 	// getProgramAccounts sweep the RPC refused (>10M accounts pre-filter), so treat
 	// "all curves are SOL" as unverified rather than established.
 	QuoteMint solana.PublicKey
+
+	// CreatorFeeBps (u64 at offset 115), CanEditCreatorFee (offset 123) and
+	// IsHolderReward (offset 124) mirror the Pump-AMM pool fields: a non-zero
+	// CreatorFeeBps REPLACES the creator fee component rather than adding to it,
+	// and a holder reward REDIRECTS that component rather than charging more.
+	CreatorFeeBps     uint64
+	CanEditCreatorFee bool
+	IsHolderReward    bool
 }
 
-// pump.fun BondingCurve account sizes live on chain (counted 2026-08-05). As with
+// pump.fun BondingCurve account sizes seen live on chain. As with
 // PumpPool every cohort is still live, so trailing fields decode as their zero value
 // rather than failing the account.
 const (
@@ -67,8 +75,13 @@ const (
 	// bondingCurveFlagsEnd is the offset past is_mayhem_mode and is_cashback_coin.
 	bondingCurveFlagsEnd = 83 // 611,945 curves
 	// bondingCurveQuoteMintEnd is the offset past quote_mint.
-	bondingCurveQuoteMintEnd = 115 // 1,179,160 curves (a further 3,221,680 carry a
-	// 35-byte tail that is all zeros today and holds nothing this decoder needs)
+	bondingCurveQuoteMintEnd = 115
+	// bondingCurveCreatorFeeEnd is the offset past creator_fee_bps (u64).
+	bondingCurveCreatorFeeEnd = 123
+	// bondingCurveCanEditEnd is the offset past can_edit_creator_fee.
+	bondingCurveCanEditEnd = 124
+	// bondingCurveHolderRewardEnd is the offset past is_holder_reward.
+	bondingCurveHolderRewardEnd = 125
 )
 
 // DecodeBondingCurve decodes a pump.fun BondingCurve account.
@@ -97,6 +110,15 @@ func DecodeBondingCurve(data []byte, address solana.PublicKey) (*BondingCurve, e
 	}
 	if len(data) >= bondingCurveQuoteMintEnd {
 		curve.QuoteMint = solana.PublicKeyFromBytes(data[83:115])
+	}
+	if len(data) >= bondingCurveCreatorFeeEnd {
+		curve.CreatorFeeBps = binary.LittleEndian.Uint64(data[115:123])
+	}
+	if len(data) >= bondingCurveCanEditEnd {
+		curve.CanEditCreatorFee = data[123] != 0
+	}
+	if len(data) >= bondingCurveHolderRewardEnd {
+		curve.IsHolderReward = data[124] != 0
 	}
 	return curve, nil
 }
