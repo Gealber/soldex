@@ -12,6 +12,7 @@ import (
 	"github.com/Gealber/soldex/models"
 	"github.com/Gealber/soldex/quote/damm"
 	"github.com/Gealber/soldex/quote/dlmm"
+	"github.com/Gealber/soldex/quote/fluxbeam"
 	"github.com/Gealber/soldex/quote/orca"
 	soldexray "github.com/Gealber/soldex/quote/raydium"
 )
@@ -688,5 +689,73 @@ func TestDLMMSwapPoolMatchesFromDLMMPool(t *testing.T) {
 	// And it refuses the same pair.
 	if _, err := DLMMSwapPool(dlmmModel(1)); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatal("DLMMSwapPool must refuse a non-Enabled pair")
+	}
+}
+
+func fluxBeamModel(curve uint8) *models.FluxBeamPool {
+	return &models.FluxBeamPool{
+		CurveType: curve,
+		Fees: models.FluxBeamFees{
+			TradeFeeNumerator: 20, TradeFeeDenominator: 10_000,
+			OwnerTradeFeeNumerator: 5, OwnerTradeFeeDenominator: 10_000,
+		},
+	}
+}
+
+// The pool's own fees must reach the quote: FluxBeam fees are creator-set and
+// range up to 90% on live pools, so a quoter built without them is not close.
+func TestFromFluxBeamPoolAppliesTheFees(t *testing.T) {
+	const rA, rB, in = uint64(1_000_000_000), uint64(1_000_000_000), uint64(10_000_000)
+
+	q, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), rA, rB)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	withFees, err := q.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	free := fluxBeamModel(models.FluxBeamCurveConstantProduct)
+	free.Fees = models.FluxBeamFees{}
+	qFree, err := FromFluxBeamPool(free, rA, rB)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	noFees, err := qFree.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if withFees >= noFees {
+		t.Fatalf("fees not applied: %d with, %d without", withFees, noFees)
+	}
+
+	// Both directions quote, and asymmetric reserves price differently.
+	q2, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), rA, rB*2)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	aToB, _ := q2.QuoteExactIn(in, true)
+	bToA, _ := q2.QuoteExactIn(in, false)
+	if aToB == bToA {
+		t.Fatal("asymmetric reserves should price the two directions differently")
+	}
+}
+
+func TestFromFluxBeamPoolRefusals(t *testing.T) {
+	if _, err := FromFluxBeamPool(nil, 1, 1); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil pool must be refused")
+	}
+	if _, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantProduct), 0, 1_000); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("an empty side must be refused")
+	}
+
+	// An unmodelled curve is refused at quote time, with the curve in the error.
+	q, err := FromFluxBeamPool(fluxBeamModel(models.FluxBeamCurveConstantPrice), 1_000_000, 1_000_000)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if _, err := q.QuoteExactIn(1_000, true); !errors.Is(err, fluxbeam.ErrUnsupportedCurve) {
+		t.Fatalf("err = %v, want ErrUnsupportedCurve", err)
 	}
 }

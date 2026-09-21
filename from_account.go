@@ -60,6 +60,9 @@ type Aux struct {
 	Vault0, Vault1        uint64 // Raydium CP-Swap, token_0 / token_1
 	BaseVault, QuoteVault uint64 // Pump AMM
 
+	// VaultA and VaultB are the FluxBeam vault token-account balances.
+	VaultA, VaultB uint64
+
 	// BaseSupply is the Pump base mint supply, for the market-cap fee tier.
 	BaseSupply uint64
 	// CurveFeeBps is the total fee for a pump.fun bonding curve, whose schedule
@@ -121,6 +124,13 @@ func FromAccount(owner solana.PublicKey, data []byte, aux Aux) (Quoter, error) {
 		}
 		return FromPumpPool(pool, aux.PumpGlobal, aux.PumpFeeConfig,
 			aux.BaseVault, aux.QuoteVault, aux.BaseSupply)
+
+	case models.FluxBeamProgramID:
+		pool, err := models.DecodeFluxBeamPool(data, addr)
+		if err != nil {
+			return nil, err
+		}
+		return FromFluxBeamPool(pool, aux.VaultA, aux.VaultB)
 
 	case PumpBondingProgramID:
 		curve, err := models.DecodeBondingCurve(data, addr)

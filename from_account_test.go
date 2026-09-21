@@ -41,6 +41,29 @@ func TestFromAccountDispatchesOnOwnerNotDiscriminator(t *testing.T) {
 	}
 }
 
+// FluxBeam has no Anchor discriminator at all, so the owner is the ONLY thing
+// that identifies one of its accounts.
+func TestFromAccountDispatchesFluxBeam(t *testing.T) {
+	data := make([]byte, 324)
+	data[0], data[1] = 1, 1 // version, is_initialized
+	data[291] = models.FluxBeamCurveConstantProduct
+
+	q, err := FromAccount(solana.MustPublicKeyFromBase58(models.FluxBeamProgramID), data,
+		Aux{VaultA: 1_000_000_000, VaultB: 1_000_000_000})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	out, err := q.QuoteExactIn(1_000_000, true)
+	if err != nil || out == 0 {
+		t.Fatalf("out = %d, err = %v", out, err)
+	}
+
+	// Without vault balances it is refused rather than quoted at zero depth.
+	if _, err := FromAccount(solana.MustPublicKeyFromBase58(models.FluxBeamProgramID), data, Aux{}); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatalf("err = %v, want ErrPoolNotQuotable", err)
+	}
+}
+
 func TestFromAccountRefusesUnknownProgram(t *testing.T) {
 	_, err := FromAccount(solana.MustPublicKeyFromBase58("11111111111111111111111111111112"), []byte{1, 2, 3}, Aux{})
 	if !errors.Is(err, ErrUnknownProgram) {
@@ -66,7 +89,7 @@ func TestFromAccountCoversEveryVenue(t *testing.T) {
 	for _, pid := range []string{
 		MeteoraDLMMProgramID, MeteoraDAMMV2ProgramID, models.OrcaWhirlpoolProgramID,
 		models.RaydiumCLMMProgramID, models.RaydiumCPMMProgramID,
-		PumpAMMProgramID, PumpBondingProgramID,
+		PumpAMMProgramID, PumpBondingProgramID, models.FluxBeamProgramID,
 	} {
 		// Empty data: every venue should fail to DECODE, never fall through to
 		// ErrUnknownProgram, which would mean the case is missing.

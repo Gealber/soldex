@@ -1,8 +1,8 @@
 // Package soldex is a single source of truth for Solana DEX swap math: on-chain
 // account decoders (models/), fixed-point primitives (math/), and exact-in swap
 // quotes (quote/) for Orca Whirlpool, Meteora DLMM, Meteora DAMM v2 (cp-amm),
-// Raydium CLMM, Raydium CP-Swap (constant-product AMM), Pump-AMM and the pump.fun
-// bonding curve.
+// Raydium CLMM, Raydium CP-Swap (constant-product AMM), FluxBeam, Pump-AMM and
+// the pump.fun bonding curve.
 //
 // Each venue's quote lives in its own quote/<dex> package with the exact state it
 // needs (bin arrays, tick arrays, oracles, fee configs). This top-level package
@@ -20,8 +20,10 @@
 package soldex
 
 import (
+	"github.com/Gealber/soldex/models"
 	"github.com/Gealber/soldex/quote/damm"
 	"github.com/Gealber/soldex/quote/dlmm"
+	"github.com/Gealber/soldex/quote/fluxbeam"
 	"github.com/Gealber/soldex/quote/orca"
 	"github.com/Gealber/soldex/quote/pump"
 	"github.com/Gealber/soldex/quote/pumpbc"
@@ -165,5 +167,20 @@ func DAMMCompounding(
 			return 0, err
 		}
 		return res.OutputAmount, nil
+	})
+}
+
+// FluxBeam binds a FluxBeam constant-product pool by its two vault token-account
+// balances and its fees. aToB swaps token A in for token B out.
+//
+// The fee is the pool's own: FluxBeam pools carry arbitrary creator-set fees, and
+// BOTH the trade and owner trade fee come off the input.
+func FluxBeam(reserveA, reserveB uint64, curveType uint8, fees models.FluxBeamFees) Quoter {
+	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
+		if aToB {
+			return fluxbeam.QuoteExactIn(curveType, reserveA, reserveB, amountIn, fees)
+		}
+
+		return fluxbeam.QuoteExactIn(curveType, reserveB, reserveA, amountIn, fees)
 	})
 }

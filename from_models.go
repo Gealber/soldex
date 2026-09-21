@@ -305,3 +305,23 @@ func FromBondingCurve(curve *models.BondingCurve, feeBps uint64) (Quoter, error)
 	}
 	return PumpBondingCurve(curve.VirtualTokenReserves, curve.VirtualSolReserves, feeBps), nil
 }
+
+// FromFluxBeamPool builds a Quoter for a FluxBeam pool.
+//
+// The two vault token-account balances are the caller's to fetch; unlike the
+// Raydium venues nothing is netted out of them, since FluxBeam tracks no fee
+// accrual inside the vaults.
+//
+// A pool whose curve this package does not model is refused at quote time rather
+// than here, because the curve is the only thing that makes it unquotable and
+// the error says which curve it was.
+func FromFluxBeamPool(pool *models.FluxBeamPool, reserveA, reserveB uint64) (Quoter, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%w: nil FluxBeam pool", ErrPoolNotQuotable)
+	}
+	if reserveA == 0 || reserveB == 0 {
+		return nil, fmt.Errorf("%w: FluxBeam pool has an empty side", ErrPoolNotQuotable)
+	}
+
+	return FluxBeam(reserveA, reserveB, pool.CurveType, pool.Fees), nil
+}
