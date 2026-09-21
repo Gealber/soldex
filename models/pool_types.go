@@ -99,9 +99,10 @@ type DLMMPool struct {
 	Reserved                 [21]uint8
 }
 
-// DAMMBaseFeeStruct mirrors cp-amm BaseFeeStruct. BaseFeeInfo is an opaque
-// 32-byte blob whose first u64 (LE) is the cliff_fee_numerator for every base
-// fee mode.
+// DAMMBaseFeeStruct mirrors cp-amm BaseFeeStruct. BaseFeeInfo is a 32-byte blob
+// whose first u64 (LE) is the cliff_fee_numerator for every base fee mode and
+// whose remaining bytes depend on the mode byte at offset 8 — see
+// ParseDAMMBaseFee, which gives it a typed reading.
 type DAMMBaseFeeStruct struct {
 	BaseFeeInfo [32]uint8
 	Padding1    uint64
@@ -216,9 +217,12 @@ type DAMMPool struct {
 	Padding5      [3]uint64
 	RewardInfos   [2]DAMMRewardInfo
 
-	// TradingFeeNumerator is the static base trading fee numerator (out of
+	// TradingFeeNumerator is the CLIFF base fee numerator (out of
 	// FEE_DENOMINATOR = 1e9), extracted from PoolFees.BaseFee.BaseFeeInfo[0:8].
 	// Not part of the serialized layout; populated during decode.
+	//
+	// It is the fee at period 0, which equals the live fee only for a static pool.
+	// Prefer CurrentBaseFeeNumerator, which resolves the schedule.
 	TradingFeeNumerator uint64 `bin:"-"`
 }
 

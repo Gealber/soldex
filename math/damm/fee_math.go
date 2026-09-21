@@ -104,3 +104,16 @@ func Pow(base *big.Int, exp int32) (*big.Int, error) {
 
 	return result, nil
 }
+
+// GetFeeInPeriodLinear is the linear fee scheduler: the fee drops by a flat
+// reductionFactor every elapsed period. Mirrors cp-amm's linear branch, which
+// saturates at zero rather than underflowing once the reduction exceeds the
+// cliff.
+func GetFeeInPeriodLinear(cliffFeeNumerator uint64, reductionFactor uint64, passedPeriod uint16) uint64 {
+	reduction := new(big.Int).Mul(common.Uint64ToBig(reductionFactor), big.NewInt(int64(passedPeriod)))
+	cliff := common.Uint64ToBig(cliffFeeNumerator)
+	if reduction.Cmp(cliff) >= 0 {
+		return 0
+	}
+	return new(big.Int).Sub(cliff, reduction).Uint64()
+}

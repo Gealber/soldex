@@ -70,7 +70,9 @@ func DecodeDAMMPool(data []byte, address solana.PublicKey) (*DAMMPool, error) {
 	}
 
 	// cliff_fee_numerator is the first u64 (LE) of the base fee data blob for
-	// every base fee mode; it is the static base trading fee numerator.
+	// every base fee mode. It is the fee at period 0, NOT necessarily the fee the
+	// pool charges now: a scheduled pool has since moved off it. Use
+	// DAMMPool.CurrentBaseFeeNumerator for the live fee.
 	pool.TradingFeeNumerator = binary.LittleEndian.Uint64(pool.PoolFees.BaseFee.BaseFeeInfo[0:8])
 
 	return pool, nil
