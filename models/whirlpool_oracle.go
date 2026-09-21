@@ -24,6 +24,12 @@ type WhirlpoolOracle struct {
 	// Whirlpool is the pool this oracle belongs to (the storage key).
 	Whirlpool solana.PublicKey `bin:"-"`
 
+	// TradeEnableTimestamp (u64 at offset 40) is the unix time at which the pool
+	// opens for trading; zero means "already open", which nearly every pool is.
+	// A pool launched with a future enable time is not tradable yet, and quoting it
+	// returns a number for a swap that would revert — gate with TradableAt.
+	TradeEnableTimestamp uint64
+
 	FilterPeriod             uint16
 	DecayPeriod              uint16
 	ReductionFactor          uint16
@@ -57,7 +63,8 @@ func DecodeWhirlpoolOracle(data []byte, address solana.PublicKey) (*WhirlpoolOra
 	pool := solana.PublicKeyFromBytes(data[8:40])
 
 	o := &WhirlpoolOracle{
-		Whirlpool: pool,
+		Whirlpool:            pool,
+		TradeEnableTimestamp: binary.LittleEndian.Uint64(data[40:48]),
 		// adaptive_fee_constants @ 48
 		FilterPeriod:             binary.LittleEndian.Uint16(data[48:50]),
 		DecayPeriod:              binary.LittleEndian.Uint16(data[50:52]),
@@ -74,4 +81,13 @@ func DecodeWhirlpoolOracle(data []byte, address solana.PublicKey) (*WhirlpoolOra
 		VolatilityAccumulator:        binary.LittleEndian.Uint32(data[106:110]),
 	}
 	return o, nil
+}
+
+// TradableAt reports whether the pool is open for trading at the given unix time.
+// A zero TradeEnableTimestamp means the pool was never gated and is always open.
+func (o *WhirlpoolOracle) TradableAt(now uint64) bool {
+	if o == nil || o.TradeEnableTimestamp == 0 {
+		return true
+	}
+	return now >= o.TradeEnableTimestamp
 }

@@ -62,3 +62,42 @@ func TestDecodeWhirlpoolOracleLayout(t *testing.T) {
 		}
 	}
 }
+
+// The Oracle's trade_enable_timestamp gates a pool that has not opened yet.
+// Quoting such a pool returns a number for a swap that would revert.
+func TestWhirlpoolOracleTradeEnableTimestamp(t *testing.T) {
+	const enable = uint64(1_787_670_240) // a real value seen live, 2026-08-25
+
+	data := make([]byte, oracleAccountLen)
+	copy(data[0:8], OracleDiscriminator[:])
+	binary.LittleEndian.PutUint64(data[40:48], enable)
+
+	o, err := DecodeWhirlpoolOracle(data, solana.PublicKey{})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if o.TradeEnableTimestamp != enable {
+		t.Fatalf("TradeEnableTimestamp = %d, want %d", o.TradeEnableTimestamp, enable)
+	}
+	if o.TradableAt(enable - 1) {
+		t.Fatal("pool must not be tradable before its enable timestamp")
+	}
+	if !o.TradableAt(enable) || !o.TradableAt(enable+1) {
+		t.Fatal("pool must be tradable at and after its enable timestamp")
+	}
+
+	// The common case: 22,974 of 23,059 live oracles carry zero, meaning always open.
+	binary.LittleEndian.PutUint64(data[40:48], 0)
+	open, err := DecodeWhirlpoolOracle(data, solana.PublicKey{})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if !open.TradableAt(0) || !open.TradableAt(1_789_979_305) {
+		t.Fatal("a zero enable timestamp must read as always tradable")
+	}
+	// A nil oracle means the pool has no adaptive-fee gate at all.
+	var none *WhirlpoolOracle
+	if !none.TradableAt(0) {
+		t.Fatal("nil oracle must read as tradable")
+	}
+}
