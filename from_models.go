@@ -8,6 +8,7 @@ import (
 	"github.com/Gealber/soldex/quote/damm"
 	"github.com/Gealber/soldex/quote/dlmm"
 	"github.com/Gealber/soldex/quote/orca"
+	soldexray "github.com/Gealber/soldex/quote/raydium"
 )
 
 // The From* constructors build a Quoter straight from a decoded model, so a
@@ -161,4 +162,41 @@ func FromWhirlpool(
 		}
 	}
 	return Orca(sp, ticks), nil
+}
+
+// FromRaydiumCLMM builds a Quoter for a Raydium CLMM pool.
+//
+// cfg is the linked AmmConfig, which is where the trade fee rate lives — the
+// pool alone cannot be quoted. blockTime is the current unix time; the dynamic
+// fee decays against it, so a stale one over-states the fee.
+//
+// This is the constructor that most needs to exist. The deployed program fills
+// limit orders, adds a volatility surcharge on top of the config rate, and can
+// take the fee out of the OUTPUT. A caller who fills SwapPool by hand and misses
+// FeeOn, Status or DynamicFee gets no error at all — just a quote of the program
+// as it behaved before those landed.
+func FromRaydiumCLMM(
+	pool *models.RaydiumCLMMPool, cfg *models.RaydiumAmmConfig,
+	ticks soldexray.TickProvider, blockTime uint64,
+) (Quoter, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%w: nil Raydium CLMM pool", ErrPoolNotQuotable)
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("%w: Raydium CLMM needs its AmmConfig for the trade fee rate", ErrPoolNotQuotable)
+	}
+	if pool.SwapDisabled() {
+		return nil, fmt.Errorf("%w: Raydium CLMM pool has swaps disabled", ErrPoolNotQuotable)
+	}
+	return Raydium(soldexray.SwapPool{
+		SqrtPrice:      pool.SqrtPriceX64.BigInt(),
+		Liquidity:      pool.Liquidity.BigInt(),
+		TickCurrent:    pool.TickCurrent,
+		TickSpacing:    pool.TickSpacing,
+		FeeRate:        cfg.TradeFeeRate,
+		FeeOn:          pool.FeeOn,
+		Status:         pool.Status,
+		DynamicFee:     pool.DynamicFee,
+		BlockTimestamp: blockTime,
+	}, ticks), nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/Gealber/soldex/quote/damm"
 	"github.com/Gealber/soldex/quote/dlmm"
 	"github.com/Gealber/soldex/quote/orca"
+	soldexray "github.com/Gealber/soldex/quote/raydium"
 )
 
 // dammPool builds a decoded pool with a concentrated range wide enough to quote
@@ -335,6 +336,90 @@ func TestFromWhirlpoolRefusesUntradablePool(t *testing.T) {
 		t.Fatalf("pool should be quotable at its enable time: %v", err)
 	}
 	if _, err := FromWhirlpool(nil, nil, orcaTicks(), now); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil pool must be refused")
+	}
+}
+
+// clmmModel mirrors the live vector frozen in quote/raydium: a pool that runs
+// both a dynamic fee and a non-zero fee_on.
+func clmmModel() *models.RaydiumCLMMPool {
+	sqrtPrice, _ := new(big.Int).SetString("4434507698921048280", 10)
+	return &models.RaydiumCLMMPool{
+		SqrtPriceX64: u128From(sqrtPrice),
+		Liquidity:    bin.Uint128{Lo: 5_885_836},
+		TickCurrent:  -28_511,
+		TickSpacing:  120,
+		FeeOn:        1,
+		Status:       0,
+		DynamicFee: models.RaydiumDynamicFee{
+			FilterPeriod: 180, DecayPeriod: 3600, ReductionFactor: 7000,
+			DynamicFeeControl: 25_000, MaxVolatilityAccumulator: 80_000,
+			TickSpacingIndexReference: -236, VolatilityAccumulator: 20_000,
+			LastUpdateTimestamp: 1_789_971_237,
+		},
+	}
+}
+
+func u128From(v *big.Int) bin.Uint128 {
+	mask := new(big.Int).SetUint64(^uint64(0))
+	lo := new(big.Int).And(v, mask).Uint64()
+	hi := new(big.Int).Rsh(v, 64).Uint64()
+	return bin.Uint128{Lo: lo, Hi: hi}
+}
+
+func clmmTicks() soldexray.TickProvider {
+	bounds := []soldexray.TickBoundary{
+		{TickIndex: -16_320, LiquidityNet: big.NewInt(740_027_133), Initialized: true},
+		{TickIndex: -14_760, LiquidityNet: big.NewInt(1_942_587_532), Initialized: true},
+		{TickIndex: -10_800, LiquidityNet: big.NewInt(-1_942_587_532), Initialized: true},
+	}
+	return func(fromTick int32, zeroForOne bool) (soldexray.TickBoundary, bool) {
+		if zeroForOne {
+			for i := len(bounds) - 1; i >= 0; i-- {
+				if bounds[i].TickIndex <= fromTick {
+					return bounds[i], true
+				}
+			}
+			return soldexray.TickBoundary{}, false
+		}
+		for i := range bounds {
+			if bounds[i].TickIndex > fromTick {
+				return bounds[i], true
+			}
+		}
+		return soldexray.TickBoundary{}, false
+	}
+}
+
+// The constructor must reproduce the amount the PROGRAM returned for this swap.
+// A caller who fills SwapPool by hand and misses FeeOn or DynamicFee gets no
+// error, just the pre-2026-07-31 program's answer — so this pins it.
+func TestFromRaydiumCLMMMatchesTheChainVector(t *testing.T) {
+	cfg := &models.RaydiumAmmConfig{TradeFeeRate: 20_000}
+	q, err := FromRaydiumCLMM(clmmModel(), cfg, clmmTicks(), 1_789_982_160)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	got, err := q.QuoteExactIn(5_000_000, false)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if want := uint64(27_438_436); got != want {
+		t.Fatalf("quote = %d, the program returned %d", got, want)
+	}
+}
+
+func TestFromRaydiumCLMMRefusals(t *testing.T) {
+	cfg := &models.RaydiumAmmConfig{TradeFeeRate: 20_000}
+	if _, err := FromRaydiumCLMM(clmmModel(), nil, clmmTicks(), 0); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a missing AmmConfig must be refused, not quoted at a zero fee rate")
+	}
+	disabled := clmmModel()
+	disabled.Status = 1 << 4
+	if _, err := FromRaydiumCLMM(disabled, cfg, clmmTicks(), 0); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a swap-disabled pool must be refused")
+	}
+	if _, err := FromRaydiumCLMM(nil, cfg, clmmTicks(), 0); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatal("nil pool must be refused")
 	}
 }
