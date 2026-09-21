@@ -12,10 +12,9 @@ import (
 // post-graduation PumpPool (Pump-AMM, pAMMBay…).
 var BondingCurveDiscriminator = [8]byte{0x17, 0xb7, 0xf8, 0x37, 0x60, 0xd8, 0xac, 0x60}
 
-// BondingCurve is a pump.fun bonding-curve account. Price and swap math run on the
-// VIRTUAL reserves as a constant product; the real reserves and Complete flag track
-// migration to the Pump-AMM. Only the fields swap/price/creator-routing need are
-// decoded; the account has grown twice since and carries a further zeroed tail.
+// BondingCurve is a pump.fun bonding-curve account. Swap math runs on the VIRTUAL
+// reserves as a constant product; the real reserves and Complete track migration
+// to the Pump-AMM. Only the fields a swap needs are decoded.
 //
 // Layout (Borsh, after the 8-byte discriminator): virtual_token_reserves u64,
 // virtual_sol_reserves u64, real_token_reserves u64, real_sol_reserves u64,
@@ -41,20 +40,12 @@ type BondingCurve struct {
 	// and decode as false there.
 	IsMayhemMode   bool
 	IsCashbackCoin bool
-	// QuoteMint (offset 83) is the mint the curve is priced in — the program added it
-	// when curves stopped being SOL-only, and the IDL renamed the reserve fields
-	// virtual_sol_reserves -> virtual_quote_reserves to match. The Go names above are
-	// kept for compatibility, which makes this field the ONLY thing that says what
-	// unit they are in.
+	// QuoteMint (offset 83) is the mint the curve is priced in, and the only thing
+	// that says what unit the *SolReserves fields are in. Non-zero means they are
+	// NOT lamports. Zero on curves too old to carry it. Check it before quoting.
 	//
-	// It is the zero pubkey on curves too old to carry it and on every curve sampled
-	// 2026-08-05 (native SOL). A NON-ZERO QuoteMint means VirtualSolReserves and
-	// RealSolReserves are NOT lamports but units of that mint, and any caller pricing
-	// them as SOL is wrong. Check it before quoting.
-	//
-	// NOT MEASURED: how many live curves carry a non-zero QuoteMint. The count needs a
-	// getProgramAccounts sweep the RPC refused (>10M accounts pre-filter), so treat
-	// "all curves are SOL" as unverified rather than established.
+	// How many live curves carry a non-zero one is NOT measured: the sweep needs a
+	// getProgramAccounts the RPC refused.
 	QuoteMint solana.PublicKey
 
 	// CreatorFeeBps (u64 at offset 115), CanEditCreatorFee (offset 123) and

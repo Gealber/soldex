@@ -26,9 +26,8 @@ type SwapStep struct {
 // takes it out of the gross OUTPUT afterwards (fee_on = Token0Only/Token1Only for
 // this direction). zeroForOne sells token_0 for token_1 (price decreasing).
 //
-// With fee-on-output the caller draws only AmountIn from the remaining input —
-// FeeAmount has already been deducted from AmountOut, so adding it again would
-// charge the trader twice.
+// With fee-on-output draw only AmountIn from the remaining input: FeeAmount is
+// already out of AmountOut, and adding it again charges the trader twice.
 func ComputeSwapStep(sqrtCurrent, sqrtTarget, liquidity *big.Int, amountRemaining uint64, feeRate uint32, zeroForOne, isFeeOnInput bool) SwapStep {
 	// Fee-on-input takes the fee off the gross input before moving the price;
 	// fee-on-output moves the price with the whole input.

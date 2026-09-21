@@ -7,15 +7,10 @@ import (
 // CurrentBaseFeeNumerator returns the base fee the pool charges AT currentPoint,
 // out of FEE_DENOMINATOR (1e9).
 //
-// currentPoint must be expressed in the pool's own activation unit: a slot when
-// ActivationType is 0 and a unix timestamp when it is 1. Passing the wrong unit
-// silently yields a wildly wrong period, so callers should read it off the same
-// clock the pool was activated against.
-//
-// This is what the swap actually charges. The cliff alone (what
-// DAMMPool.TradingFeeNumerator carries) is only right for a static pool; a
-// scheduled pool has since moved off it. Roughly one live pool in seven is
-// scheduled.
+// currentPoint must be in the pool's own activation unit, slot or timestamp; the
+// wrong unit silently yields the wrong period. This is what the swap charges:
+// TradingFeeNumerator is the cliff, right only for a static pool, and roughly one
+// live pool in seven is scheduled.
 func (f DAMMBaseFee) CurrentBaseFeeNumerator(currentPoint, activationPoint uint64) (uint64, error) {
 	switch f.Mode {
 	case DAMMBaseFeeModeTimeLinear, DAMMBaseFeeModeTimeExponential:

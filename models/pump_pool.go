@@ -12,11 +12,9 @@ import (
 // program.
 var PumpPoolDiscriminator = [8]byte{241, 154, 109, 4, 17, 177, 109, 188}
 
-// PumpPool is a Pump-AMM constant-product pool — where pump.fun tokens live after
-// they graduate. Only the fields a swap leg needs are decoded: the base/quote
-// mints, the pool's vault token accounts, and the coin creator (which seeds the
-// creator-fee vault the swap must pass). The swap needs no bin/tick arrays; the
-// reserves are the vault token-account balances (read separately for a quote).
+// PumpPool is a Pump-AMM constant-product pool, where pump.fun tokens live after
+// they graduate. Only the fields a swap leg needs are decoded; the reserves are
+// the vault token-account balances, read separately.
 //
 // Layout (Borsh, after the 8-byte discriminator): pool_bump u8, index u16,
 // creator Pubkey, base_mint Pubkey, quote_mint Pubkey, lp_mint Pubkey,
@@ -35,25 +33,12 @@ type PumpPool struct {
 	Creator solana.PublicKey
 	// IsCashbackCoin (offset 244) flips the creator fee to the global rate.
 	IsCashbackCoin bool
-	// VirtualQuoteReserves (i128 at offset 245, named virtual_quote_reserves in the
-	// program IDL) is quote-side reserve the program prices with that is NOT held in
-	// the quote vault. A quote taken on the vault balance alone therefore reads the
-	// pool as shallower than it is and over-predicts what a buy returns — measured
-	// 2026-07-25 against simulateTransaction at +5.5% on a 317 SOL pool and +775% on
-	// a 2.2 SOL one, since the offset is absolute and the relative error grows as the
-	// pool shrinks. Always price through EffectiveQuoteReserve, never the raw vault
-	// balance.
+	// VirtualQuoteReserves (i128@245) is quote reserve the program prices with that
+	// is NOT in the vault. Price through EffectiveQuoteReserve: on the raw balance a
+	// buy over-predicts by +5.5% on a 317 SOL pool and +775% on a 2.2 SOL one.
 	//
-	// It is absent (zero) on every cohort below 261 bytes. Where present it
-	// clusters tightly near 17.6 SOL, but the tails are wide (measured 0.003 to
-	// 47,043), and it drifts upward over time. It is neither a constant nor a
-	// per-pool invariant, so read it live from the account rather than caching or
-	// assuming it.
-	//
-	// The on-chain type is SIGNED, so the pool can in principle price against LESS
-	// than its vault balance. No live pool has held a negative value, but the sign
-	// is honoured rather than assumed away: reading it unsigned would turn the
-	// first negative value into ~1.8e19 lamports of imaginary depth.
+	// Zero below 261 bytes. It drifts and is not a per-pool invariant, so read it
+	// live. The type is SIGNED; read unsigned, a negative would become 1.8e19.
 	VirtualQuoteReserves int64
 
 	// CreatorFeeBps (u64 at offset 261) is a PER-POOL override of the creator fee.

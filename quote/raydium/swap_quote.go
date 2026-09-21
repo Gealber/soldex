@@ -1,19 +1,8 @@
-// Package raydium ports the Raydium CLMM exact-in swap quote (concentrated
-// liquidity, Q64.64). It mirrors the on-chain swap_internal tick-walking loop and
-// walks a cached window of tick arrays (stopping at the edge of known liquidity)
-// rather than the on-chain tickarray bitmap.
-//
-// Beyond plain tick crossing it models the three things the 2026-07-31 program
-// upgrade added, because each one changes the amount out:
-//
-//   - LIMIT ORDERS resting at an initialized tick, filled at the tick price before
-//     the swap crosses it (see limit_order.go),
-//   - a DYNAMIC FEE that adds to the AmmConfig fee as the price travels, stepping
-//     the swap one tick-spacing group at a time (see dynamic_fee.go),
-//   - fee_on, which for one direction takes the fee out of the OUTPUT instead of
-//     the input.
-//
-// Only the exact-in direction is implemented.
+// Package raydium ports the Raydium CLMM exact-in swap quote, mirroring
+// swap_internal over a cached tick-array window. It also models the three things
+// the 2026-07-31 upgrade added, each of which changes the amount out: limit
+// orders (limit_order.go), the dynamic fee (dynamic_fee.go), and fee_on, which
+// for one direction takes the fee out of the OUTPUT.
 package raydium
 
 import (

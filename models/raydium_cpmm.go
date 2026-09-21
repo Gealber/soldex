@@ -25,11 +25,9 @@ var RaydiumCPMMPoolDiscriminator = [8]byte{247, 237, 227, 245, 215, 195, 222, 70
 // is a u64 here, u32 there), so decode with DecodeRaydiumCPMMConfig specifically.
 var RaydiumCPMMConfigDiscriminator = [8]byte{218, 244, 33, 104, 203, 203, 43, 111}
 
-// RaydiumCPMMPool mirrors the fields of a Raydium CP-Swap PoolState needed to
-// quote a swap. The swap needs no bin/tick arrays; the pool holds constant-product
-// reserves in its two vault token accounts, but the SWAPPABLE reserve is the vault
-// balance minus the protocol and fund fees the pool has accrued — use NetReserves.
-// The trade fee lives in the linked AmmConfig, not the pool.
+// RaydiumCPMMPool mirrors the Raydium CP-Swap PoolState fields a swap needs. The
+// SWAPPABLE reserve is the vault balance minus accrued protocol and fund fees, so
+// use NetReserves; the trade fee lives in the linked AmmConfig, not here.
 //
 // Layout (Borsh, after the 8-byte discriminator): amm_config Pubkey@0,
 // pool_creator Pubkey@32, token_0_vault Pubkey@64, token_1_vault Pubkey@96,
@@ -122,14 +120,10 @@ func DecodeRaydiumCPMMPool(data []byte, address solana.PublicKey) (*RaydiumCPMMP
 	}, nil
 }
 
-// NetReserves returns the swappable constant-product reserves given the pool's two
-// raw vault token-account balances (read separately). It subtracts the protocol,
-// fund AND creator fees the pool tracks, matching the on-chain
-// vault_amount_without_fee. Subtraction saturates at zero rather than
-// underflowing.
-//
-// Creator fees sit in the vault exactly like the other two accruals, so counting
-// them as reserve over-states the pool's depth and the output with it.
+// NetReserves returns the swappable reserves given the two raw vault balances,
+// subtracting the protocol, fund AND creator fees the pool tracks to match
+// vault_amount_without_fee. Creator fees sit in the vault like the rest, so
+// counting them as reserve over-states the pool's depth. Saturates at zero.
 func (p *RaydiumCPMMPool) NetReserves(vault0Balance, vault1Balance uint64) (reserve0, reserve1 uint64) {
 	return saturatingSub(vault0Balance, p.ProtocolFeesToken0+p.FundFeesToken0+p.CreatorFeesToken0),
 		saturatingSub(vault1Balance, p.ProtocolFeesToken1+p.FundFeesToken1+p.CreatorFeesToken1)

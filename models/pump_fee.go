@@ -83,10 +83,8 @@ type PumpFeeConfig struct {
 // admin(32)@9, flat_fees(3*u64=24)@41, fee_tiers Vec: len u32@65, then entries of
 // {market_cap_threshold u128(16), fees 3*u64(24)} = 40 bytes each at 69+i*40.
 //
-// The account has since grown to 4097 bytes and carries two more schedules:
-// stable_fee_tiers as a second Vec at 1069 (same entry layout) and
-// exotic_flat_fees at 2073. Which of the three a swap uses is decided by the
-// pool's QUOTE MINT — see PumpTotalFeeBps.
+// Grown to 4097 bytes with two more schedules: stable_fee_tiers at 1069 (same
+// entry layout) and exotic_flat_fees at 2073. The pool's QUOTE MINT picks one.
 func DecodePumpFeeConfig(data []byte) (*PumpFeeConfig, error) {
 	if len(data) < 69 {
 		return nil, ErrInsufficientData
@@ -187,16 +185,9 @@ const (
 	PumpQuoteExotic
 )
 
-// ClassifyPumpQuoteMint maps a pool's quote mint to its fee schedule class.
-//
-// The stablecoin set is not readable from chain: neither fee_config nor
-// global_config carries a mint list, so the program holds it internally. USDC and
-// USDT are used here because they are the only recognisable stablecoins with a
-// meaningful pool count.
-//
-// Misclassifying an exotic mint is harmless for a QUOTE, since exotic_flat_fees
-// and flat_fees both total 30 bps and only the total reaches the output.
-// Misclassifying a stablecoin picks the wrong market-cap tier.
+// ClassifyPumpQuoteMint maps a pool's quote mint to its fee schedule class. The
+// stablecoin set is not readable from chain, so USDC and USDT are hardcoded.
+// Misclassifying an exotic mint is harmless, a stablecoin picks the wrong tier.
 func ClassifyPumpQuoteMint(mint solana.PublicKey) PumpQuoteClass {
 	switch {
 	case mint.IsZero(), mint.Equals(pumpWSOLMint):
@@ -213,25 +204,16 @@ func ClassifyPumpQuoteMint(mint solana.PublicKey) PumpQuoteClass {
 	}
 }
 
-// PumpTotalFeeBps is the total swap fee (lp + protocol + creator) a Pump-AMM pool
-// charges, mirroring the on-chain GetFees the swap CPIs.
-//
-// The schedule is chosen by GRADUATE STATUS and QUOTE MINT together, confirmed
-// against live Buy/SellEvent logs.
+// PumpTotalFeeBps is the total swap fee (lp + protocol + creator), mirroring the
+// on-chain GetFees. The schedule is chosen by graduate status AND quote mint:
 //
 //   - not a graduate          -> flat_fees
 //   - graduate, SOL quote     -> fee_tiers by market cap
-//   - graduate, stable quote  -> stable_fee_tiers (different thresholds entirely:
-//     59e9 at tier 1 where the SOL schedule has 420e9)
+//   - graduate, stable quote  -> stable_fee_tiers, different thresholds entirely
 //   - graduate, exotic quote  -> exotic_flat_fees, falling back to flat_fees
 //
-// The creator component is REPLACED, not topped up, by a pool's own CreatorFeeBps
-// when the global config allows overrides; it is capped by the global maximum. A
-// holder-reward pool REDIRECTS that same creator fee to token holders rather than
-// charging anything extra, so it must not change the total.
-//
-// A cashback coin likewise still DEDUCTS the full creator fee in the swap — the
-// cashback is rebated separately and claimable, so it does not raise the output.
+// A pool's own CreatorFeeBps REPLACES the schedule's creator component, it is not
+// added. Holder-reward and cashback pools redirect that fee, they do not change it.
 func PumpTotalFeeBps(g *PumpGlobalConfig, fc *PumpFeeConfig, pool *PumpPool, baseReserve, quoteReserve, baseSupply uint64) uint64 {
 	var f PumpFees
 	switch {

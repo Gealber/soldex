@@ -46,10 +46,9 @@ func (f DAMMBaseFee) RateLimiterApplies(currentPoint, activationPoint uint64, is
 // a rate-limited pool. Callers should gate it on RateLimiterApplies; outside the
 // window or direction the pool charges CliffFeeNumerator flat.
 //
-// The curve is the one documented on BorshFeeRateLimiter in the cp-amm IDL. With
-// x0 = reference_amount, c = cliff_fee_numerator and i = fee_increment, the input
-// is charged in x0-sized chunks at a rate that climbs by i per chunk and is
-// capped at MAX_FEE:
+// The curve is BorshFeeRateLimiter's, from the cp-amm IDL. With x0 =
+// reference_amount, c = cliff_fee_numerator and i = fee_increment, the input is
+// charged in x0-sized chunks at a rate climbing by i per chunk, capped at MAX_FEE:
 //
 //	input <= x0                  fee = input * c
 //	input  > x0, input = x0 + (a*x0 + b):
@@ -58,13 +57,9 @@ func (f DAMMBaseFee) RateLimiterApplies(currentPoint, activationPoint uint64, is
 //	                             fee = x0*(c + c*max_index + i*max_index*(max_index+1)/2)
 //	                                   + (d*x0 + b) * MAX_FEE
 //
-// where max_index = (MAX_FEE - c) / i is the last chunk before the cap binds.
-// Those products are fee-numerator units, so the result is divided by
-// FEE_DENOMINATOR, rounding UP to match GetExcludedFeeAmount.
-//
-// A degenerate configuration charges the flat cliff fee, and most live
-// rate-limited pools are configured that way — cap equal to the cliff and a
-// one-second window — so their limiter never bites.
+// max_index = (MAX_FEE - c) / i is the last chunk before the cap binds. The
+// result is divided by FEE_DENOMINATOR, rounding UP to match
+// GetExcludedFeeAmount. A degenerate config charges the flat cliff fee.
 func (f DAMMBaseFee) RateLimiterFee(inputAmount uint64) (uint64, error) {
 	if f.Mode != DAMMBaseFeeModeRateLimiter {
 		return 0, ErrNotRateLimiter

@@ -40,13 +40,9 @@ func QuoteExactIn(curveType uint8, reserveIn, reserveOut, amountIn uint64, fees 
 // constant-product pool holding reserveIn / reserveOut, which are the two vault
 // token-account balances.
 //
-// BOTH the trade fee and the owner trade fee come off the input before the
-// curve — the program adds them together and subtracts the total. The withdraw
-// fee applies to withdrawals and the host fee is carved out of the owner fee for
-// a referrer, so neither changes what a swap returns.
-//
-// Ignoring the owner fee is not a rounding matter here: pool creators set their
-// own fees and plenty of live pools carry an owner trade fee of 90%.
+// BOTH the trade fee and the owner trade fee come off the input before the curve.
+// The withdraw and host fees do not change what a swap returns. Ignoring the
+// owner fee is not rounding: live pools carry owner fees as high as 90%.
 func SwapExactIn(reserveIn, reserveOut, amountIn uint64, fees models.FluxBeamFees) (uint64, error) {
 	tradeFee := calculateFee(amountIn, fees.TradeFeeNumerator, fees.TradeFeeDenominator)
 	ownerFee := calculateFee(amountIn, fees.OwnerTradeFeeNumerator, fees.OwnerTradeFeeDenominator)

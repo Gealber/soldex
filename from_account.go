@@ -25,14 +25,9 @@ const (
 // does not quote.
 var ErrUnknownProgram = errors.New("soldex: unknown program")
 
-// Aux carries the state a quote needs but an account alone does not hold:
-// providers for the bin and tick windows, the linked config accounts, vault
-// balances, and the clock.
-//
-// Every field is optional in the sense that Go will zero it, but a venue that
-// needs one and does not get it is REFUSED rather than quoted on the zero value.
-// Populate what the venue you are decoding requires; FromAccount says which when
-// it refuses.
+// Aux carries the state a quote needs but the account does not hold: bin and
+// tick providers, linked configs, vault balances and the clock. A venue missing
+// one it needs is refused, not quoted on the zero value.
 type Aux struct {
 	// Now is the current unix time. DLMM, Orca and Raydium CLMM all decay a
 	// volatility reference against it, so a stale value over-states their fees.
@@ -76,15 +71,9 @@ type Aux struct {
 	CurveFeeBps uint64
 }
 
-// FromAccount decodes a pool account and returns a Quoter for it, dispatching on
-// the OWNING PROGRAM rather than the discriminator.
-//
-// The owner is what makes this safe: Raydium CLMM and CP-Swap share an account
-// discriminator, so discriminator-only dispatch picks the wrong decoder for one
-// of them. An RPC gives the owner alongside the data, so use it.
-//
-// Adding a venue is a case here plus its From* constructor; callers do not
-// change.
+// FromAccount decodes a pool account and returns a Quoter, dispatching on the
+// OWNING PROGRAM. Raydium CLMM and CP-Swap share a discriminator, so dispatching
+// on that alone picks the wrong decoder for one of them.
 func FromAccount(owner solana.PublicKey, data []byte, aux Aux) (Quoter, error) {
 	addr := solana.PublicKey{}
 	switch owner.String() {

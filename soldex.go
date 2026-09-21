@@ -1,22 +1,8 @@
-// Package soldex is a single source of truth for Solana DEX swap math: on-chain
-// account decoders (models/), fixed-point primitives (math/), and exact-in swap
-// quotes (quote/) for Orca Whirlpool, Meteora DLMM, Meteora DAMM v2 (cp-amm),
-// Raydium CLMM, Raydium CP-Swap (constant-product AMM), FluxBeam, Pump-AMM and
-// the pump.fun bonding curve.
+// Package soldex is Solana DEX swap math: account decoders (models/), fixed-point
+// primitives (math/) and exact-in quotes (quote/), behind one Quoter.
 //
-// Each venue's quote lives in its own quote/<dex> package with the exact state it
-// needs (bin arrays, tick arrays, oracles, fee configs). This top-level package
-// adds a uniform Quoter over them so a caller can hold a heterogeneous set of pools
-// and quote them through one call site.
-//
-// Start with FromAccount, which decodes an account and dispatches on its owning
-// program, or the per-venue From* constructors when the venue is already known.
-// Those derive every fee from the pool and refuse a pool that cannot be quoted.
-//
-// The adapters below (DLMM, Orca, Raydium, ...) are the layer underneath: they
-// bind an already-assembled quote struct. They accept whatever fee you give them,
-// including none, so prefer a From* constructor unless you are deliberately
-// overriding something.
+// Start with FromAccount or a From* constructor. The adapters below bind an
+// already-assembled quote struct and accept whatever fee you give them.
 package soldex
 
 import (
@@ -31,13 +17,9 @@ import (
 	"github.com/Gealber/soldex/quote/raydium"
 )
 
-// Quoter is the uniform exact-in interface across every supported venue.
-//
-// aToB fixes the swap direction against the pool's canonical token ordering: when
-// true the input is the pool's first token (DLMM X, Orca token_a, Raydium token0,
-// DAMM token_a, Pump base) and the output is the second; when false the reverse.
-// It maps to each venue's native flag (swapForY / aToB / zeroForOne / TradeDirection
-// / sell-vs-buy) inside the adapter.
+// Quoter is the uniform exact-in interface across every supported venue. aToB
+// true means the pool's first token in (DLMM X, Orca token_a, Raydium token0,
+// DAMM token_a, Pump base), false the reverse.
 type Quoter interface {
 	QuoteExactIn(amountIn uint64, aToB bool) (amountOut uint64, err error)
 }
@@ -66,22 +48,16 @@ func Orca(pool orca.SwapPool, ticks orca.TickProvider) Quoter {
 }
 
 // Raydium binds a Raydium CLMM pool with its tick provider. aToB == zeroForOne.
-//
-// Populate SwapPool.FeeOn, Status, DynamicFee and BlockTimestamp from the decoded pool,
-// not just the price and liquidity — the deployed program fills limit orders, charges a
-// volatility-driven fee on top of the AmmConfig rate, and can take that fee out of the
-// OUTPUT. Leaving them zero quotes the pre-2026-07-31 program.
+// Populate FeeOn, Status, DynamicFee and BlockTimestamp too; zero quotes the
+// pre-2026-07-31 program.
 func Raydium(pool raydium.SwapPool, ticks raydium.TickProvider) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		return raydium.QuoteExactIn(pool, aToB, amountIn, ticks)
 	})
 }
 
-// DAMMConcentrated binds a Meteora DAMM v2 concentrated-liquidity pool
-// (CollectFeeMode BothToken or OnlyB). aToB maps to TradeDirectionAtoB.
-//
-// A CollectFeeMode 2 (Compounding) pool is refused with damm.ErrCompoundingPool
-// rather than quoted on the wrong curve.
+// DAMMConcentrated binds a Meteora DAMM v2 concentrated pool (CollectFeeMode
+// BothToken or OnlyB). CollectFeeMode 2 is refused with damm.ErrCompoundingPool.
 func DAMMConcentrated(pool damm.ConcentratedPool) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		dir := damm.TradeDirectionBtoA
@@ -92,14 +68,9 @@ func DAMMConcentrated(pool damm.ConcentratedPool) Quoter {
 	})
 }
 
-// RaydiumCPMM binds a Raydium CP-Swap (CPMMoo8L…) constant-product pool by its two
-// net vault reserves — the raw vault balances minus the protocol, fund AND creator
-// fees the pool tracks; use models.RaydiumCPMMPool.NetReserves to compute them —
-// and the total input-side fee rate (out of 1e6). aToB swaps token_0 in for
-// token_1 out; !aToB reverses.
-//
-// feeRate must be the AmmConfig trade fee rate PLUS the pool's effective creator
-// fee rate (models.RaydiumCPMMPool.EffectiveCreatorFeeRate).
+// RaydiumCPMM binds a Raydium CP-Swap pool by its NET reserves (see
+// models.RaydiumCPMMPool.NetReserves) and the total input-side fee rate out of
+// 1e6, which is the AmmConfig rate PLUS EffectiveCreatorFeeRate.
 func RaydiumCPMM(reserve0, reserve1, feeRate uint64) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		if aToB {
@@ -109,15 +80,11 @@ func RaydiumCPMM(reserve0, reserve1, feeRate uint64) Quoter {
 	})
 }
 
-// Pump binds a Pump-AMM constant-product pool by its base vault reserve, its EFFECTIVE
-// quote reserve and the total fee (basis points; compute via models.PumpTotalFeeBps).
-// aToB == sell (base in, quote out); !aToB == buy (quote in, base out).
+// Pump binds a Pump-AMM pool. aToB == sell. feeBps comes from
+// models.PumpTotalFeeBps.
 //
-// quoteReserve is NOT the quote vault balance: newer pools price with additional
-// quote-side reserve held outside the vault, so pass
-// models.PumpPool.EffectiveQuoteReserve(vaultQuoteBalance). Passing the raw vault
-// balance over-predicts a buy by the offset's share of the pool — 5.5% on a 317 SOL
-// pool, 775% on a 2.2 SOL one — which reads as free arbitrage that is not there.
+// quoteReserve is NOT the vault balance: pass EffectiveQuoteReserve, or a buy
+// over-predicts by up to 775% on a shallow pool.
 func Pump(baseReserve, quoteReserve, feeBps uint64) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		if aToB {
@@ -127,14 +94,9 @@ func Pump(baseReserve, quoteReserve, feeBps uint64) Quoter {
 	})
 }
 
-// PumpBondingCurve binds a pump.fun bonding curve (the PRE-graduation curve, not
-// the Pump-AMM pool) by its VIRTUAL reserves and total fee in basis points.
-// aToB == sell (token in, quote out); !aToB == buy (quote in, token out).
-//
-// The curve prices on its virtual reserves, not the real ones — pass
-// BondingCurve.VirtualTokenReserves and VirtualSolReserves. Check
-// BondingCurve.IsSOLQuoted first: a curve carrying a non-zero QuoteMint prices in
-// that mint, not lamports, and the reserve fields say nothing about which.
+// PumpBondingCurve binds a pump.fun PRE-graduation curve by its VIRTUAL reserves.
+// aToB == sell. Check BondingCurve.IsSOLQuoted first: a non-zero QuoteMint prices
+// in that mint, not lamports, and the reserves do not say which.
 func PumpBondingCurve(virtualTokenReserves, virtualQuoteReserves, feeBps uint64) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		if aToB {
@@ -144,13 +106,9 @@ func PumpBondingCurve(virtualTokenReserves, virtualQuoteReserves, feeBps uint64)
 	})
 }
 
-// DAMMCompounding binds a Meteora DAMM v2 pool that collects fees by COMPOUNDING
-// them back into liquidity (CollectFeeMode 2) — the mode DAMMConcentrated refuses.
-// aToB maps to TradeDirectionAtoB.
-//
-// feeNumerator is out of damm.FeeDenominator (1e9) and must be the fee the pool
-// charges NOW, which for a scheduled pool is not its cliff: resolve it with
-// models.DAMMPool.CurrentBaseFeeNumerator. feeOnInput mirrors the pool's fee mode.
+// DAMMCompounding binds a Meteora DAMM v2 CollectFeeMode 2 pool. feeNumerator is
+// out of damm.FeeDenominator and must be the fee charged NOW, not the cliff:
+// resolve it with models.DAMMPool.CurrentBaseFeeNumerator.
 func DAMMCompounding(
 	tokenAReserve, tokenBReserve, feeNumerator uint64,
 	feeOnInput, hasReferral bool,
@@ -171,15 +129,8 @@ func DAMMCompounding(
 }
 
 // FluxBeam binds a FluxBeam constant-product pool by its two sides and its fees.
-// aToB swaps token A in for token B out.
-//
-// The pool fee is the pool's own: FluxBeam pools carry arbitrary creator-set
-// fees, and BOTH the trade and owner trade fee come off the input.
-//
-// A Token-2022 transfer fee is charged twice around that, exactly as the program
-// does it: the source mint's fee comes off the input before the curve sees it,
-// and the destination mint's fee comes off the output. The result is what the
-// taker receives, which is also what the program compares to minimum_amount_out.
+// Both pool fees come off the input; a Token-2022 transfer fee is charged around
+// the curve, on the input and again on the output, as the program does it.
 func FluxBeam(a, b FluxBeamSide, curveType uint8, fees models.FluxBeamFees, epoch uint64) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		in, out := a, b

@@ -120,16 +120,10 @@ func compoundingInputForOutput(tokenA, tokenB, amountOut uint64, dir TradeDirect
 // QuoteExactOutCompounding calculates the input required for an exact-out swap on
 // a compounding AMM pool.
 //
-// Both fee modes have to gross UP, because the caller is telling us what they want
-// to RECEIVE and the fee is paid on top of that:
-//
-//   - fee on input: the curve needs `net`, so the caller must send
-//     `net / (1 - fee)` for `net` to survive the fee and reach the curve.
-//   - fee on output: the caller wants `amountOut` NET, so the curve must produce
-//     `amountOut / (1 - fee)` gross, and the input follows from that gross figure.
-//
-// Reversing either direction — returning the net curve input, or sizing the input
-// off the net output — understates what the swap actually costs by the fee.
+// Both fee modes gross UP, since the caller names what they want to RECEIVE:
+// fee-on-input needs net/(1-fee) sent so net reaches the curve, fee-on-output
+// needs the curve to produce amountOut/(1-fee) gross. Reversing either
+// understates the cost by the fee.
 func QuoteExactOutCompounding(
 	amountOut uint64,
 	tokenAReserve uint64,

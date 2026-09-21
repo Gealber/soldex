@@ -12,31 +12,18 @@ import (
 )
 
 // The From* constructors build a Quoter straight from a decoded model, so a
-// caller never hand-maps a pool into a per-venue quote struct. That mapping is
-// where fees get silently left at zero: the quote structs accept a zero fee
-// without complaint, and a zero fee over-states every output.
-//
-// Each one takes the model plus only what this package cannot derive — bin and
-// tick providers, vault balances, the current time or point, linked config
-// accounts — derives every fee itself, and returns an error rather than a guess
-// when the pool cannot be quoted. None of them perform I/O; fetching stays the
-// caller's job.
+// caller never hand-maps a pool into a quote struct and leaves a fee at zero.
+// They derive every fee, error rather than guess, and perform no I/O.
 
 // ErrPoolNotQuotable is returned when a pool cannot be quoted at all, as opposed
 // to quoting to zero.
 var ErrPoolNotQuotable = errors.New("soldex: pool is not quotable")
 
-// FromDAMMPool builds a Quoter for a Meteora DAMM v2 pool.
+// FromDAMMPool builds a Quoter for a Meteora DAMM v2 pool. CollectFeeMode 2 is
+// routed to the compounding quote.
 //
-// currentPoint must be in the pool's own activation unit — a slot when
-// ActivationType is 0, a unix timestamp when it is 1 — because it resolves the
-// base fee schedule. Passing the wrong unit silently picks the wrong period, so
-// this is the one argument worth double-checking.
-//
-// The fee is derived from the pool, not supplied: a scheduled pool charges
-// neither its cliff nor zero, and both of those are easy to pass by accident.
-// A CollectFeeMode 2 pool is routed to the compounding quote rather than
-// refused, so callers get one door for all three fee modes.
+// currentPoint must be in the pool's OWN activation unit, slot or timestamp; the
+// wrong unit silently resolves the fee schedule to the wrong period.
 func FromDAMMPool(pool *models.DAMMPool, currentPoint uint64) (Quoter, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("%w: nil DAMM pool", ErrPoolNotQuotable)
@@ -73,13 +60,8 @@ func FromDAMMPool(pool *models.DAMMPool, currentPoint uint64) (Quoter, error) {
 }
 
 // DLMMSwapPool maps a decoded pool onto the quote package's input, refusing a
-// pair that is not Enabled.
-//
-// FromDLMMPool is the usual entry point. This exists for callers that need
-// dlmm.QuoteExactInDetailed — the Quoter interface returns only an amount, so it
-// cannot express a partial fill, and a caller that must detect one has to drive
-// the quote package directly. They should still not hand-map the twelve fee and
-// volatility parameters to do it.
+// pair that is not Enabled. FromDLMMPool is the usual entry point; this is for
+// callers needing dlmm.QuoteExactInDetailed to detect a partial fill.
 func DLMMSwapPool(pool *models.DLMMPool) (dlmm.SwapPool, error) {
 	if pool == nil {
 		return dlmm.SwapPool{}, fmt.Errorf("%w: nil DLMM pool", ErrPoolNotQuotable)
@@ -109,15 +91,9 @@ func DLMMSwapPool(pool *models.DLMMPool) (dlmm.SwapPool, error) {
 	}, nil
 }
 
-// FromDLMMPool builds a Quoter for a Meteora DLMM pool.
-//
-// currentTimestamp is the swap's block time; the variable fee decays against it,
-// so a stale one over-states the fee. bins is the cached bin-array window the
-// quote walks — it stops at the edge of what the provider knows, so a window too
-// narrow silently truncates a large swap.
-//
-// A pair whose Status is not Enabled is refused: it cannot trade, and a number
-// for a swap that would revert is worse than no number.
+// FromDLMMPool builds a Quoter for a Meteora DLMM pool. A pair that is not
+// Enabled is refused. A stale currentTimestamp over-states the variable fee, and
+// a bin window too narrow silently truncates a large swap.
 func FromDLMMPool(pool *models.DLMMPool, currentTimestamp int64, bins dlmm.BinProvider) (Quoter, error) {
 	sp, err := DLMMSwapPool(pool)
 	if err != nil {
@@ -129,15 +105,9 @@ func FromDLMMPool(pool *models.DLMMPool, currentTimestamp int64, bins dlmm.BinPr
 // dlmmPairStatusEnabled is lb_clmm's PairStatus::Enabled.
 const dlmmPairStatusEnabled uint8 = 0
 
-// FromWhirlpool builds a Quoter for an Orca Whirlpool.
-//
-// oracle is the pool's Oracle account, or nil for a plain static-fee pool — only
-// adaptive-fee pools have one. Passing nil for a pool that HAS an oracle quotes
-// it without the volatility surcharge, so fetch it before deciding.
-//
-// now is the current unix time, used both to decay the adaptive-fee reference
-// and to check the pool has opened. A pool whose oracle gates trading until a
-// future timestamp is refused.
+// FromWhirlpool builds a Quoter for an Orca Whirlpool. A pool whose oracle gates
+// trading until a future timestamp is refused. Pass nil for oracle only on a
+// static-fee pool; nil on one that has an oracle drops the volatility surcharge.
 func FromWhirlpool(
 	pool *models.Whirlpool, oracle *models.WhirlpoolOracle,
 	ticks orca.TickProvider, now uint64,
@@ -180,17 +150,9 @@ func FromWhirlpool(
 	return Orca(sp, ticks), nil
 }
 
-// FromRaydiumCLMM builds a Quoter for a Raydium CLMM pool.
-//
-// cfg is the linked AmmConfig, which is where the trade fee rate lives — the
-// pool alone cannot be quoted. blockTime is the current unix time; the dynamic
-// fee decays against it, so a stale one over-states the fee.
-//
-// This is the constructor that most needs to exist. The deployed program fills
-// limit orders, adds a volatility surcharge on top of the config rate, and can
-// take the fee out of the OUTPUT. A caller who fills SwapPool by hand and misses
-// FeeOn, Status or DynamicFee gets no error at all — just a quote of the program
-// as it behaved before those landed.
+// FromRaydiumCLMM builds a Quoter for a Raydium CLMM pool. cfg is the linked
+// AmmConfig, where the trade fee rate lives; the pool alone cannot be quoted.
+// A hand-filled SwapPool missing FeeOn, Status or DynamicFee errors on nothing.
 func FromRaydiumCLMM(
 	pool *models.RaydiumCLMMPool, cfg *models.RaydiumAmmConfig,
 	ticks soldexray.TickProvider, blockTime uint64,
@@ -217,15 +179,9 @@ func FromRaydiumCLMM(
 	}, ticks), nil
 }
 
-// FromRaydiumCPMM builds a Quoter for a Raydium CP-Swap constant-product pool.
-//
-// The two vault token-account balances are the caller's to fetch; soldex nets
-// them down by the protocol, fund and creator fees the pool tracks, which sit in
-// the vaults but are not swappable.
-//
-// cfg is the linked AmmConfig. The fee charged is its trade rate PLUS the pool's
-// creator fee where the pool enables one, so quoting on the trade rate alone
-// under-charges and over-states the output.
+// FromRaydiumCPMM builds a Quoter for a Raydium CP-Swap pool. The vault balances
+// are netted down by the fees the pool tracks, which sit in the vaults but are
+// not swappable, and the rate charged is cfg's trade rate plus the creator fee.
 func FromRaydiumCPMM(
 	pool *models.RaydiumCPMMPool, cfg *models.RaydiumCPMMConfig,
 	vault0Balance, vault1Balance uint64,
@@ -246,20 +202,9 @@ func FromRaydiumCPMM(
 	return RaydiumCPMM(reserve0, reserve1, cfg.TradeFeeRate+pool.EffectiveCreatorFeeRate(cfg)), nil
 }
 
-// FromPumpPool builds a Quoter for a Pump-AMM pool.
-//
-// baseVaultBalance and quoteVaultBalance are the pool's two vault token-account
-// balances. The quote side is netted through EffectiveQuoteReserve, because
-// newer pools price against quote reserve held OUTSIDE the vault: quoting on the
-// raw balance reads the pool as shallower than it is and over-predicts a buy.
-//
-// baseSupply is the base mint's supply, used for the market-cap fee tier. It is
-// the caller's to supply — soldex will not assume a supply for a mayhem coin,
-// since the fixed value the SDK implies has never been confirmed on chain.
-//
-// The fee is derived from the global config, the fee config and the pool
-// together: the schedule depends on graduate status and quote mint, and a pool
-// carrying its own creator fee replaces the schedule's creator component.
+// FromPumpPool builds a Quoter for a Pump-AMM pool. The quote side is netted
+// through EffectiveQuoteReserve, since newer pools hold reserve outside the
+// vault. baseSupply feeds the market-cap fee tier and stays the caller's.
 func FromPumpPool(
 	pool *models.PumpPool, global *models.PumpGlobalConfig, feeCfg *models.PumpFeeConfig,
 	baseVaultBalance, quoteVaultBalance, baseSupply uint64,
@@ -278,18 +223,9 @@ func FromPumpPool(
 	return Pump(baseVaultBalance, quoteReserve, feeBps), nil
 }
 
-// FromBondingCurve builds a Quoter for a pump.fun bonding curve — the
-// PRE-graduation curve, not the Pump-AMM pool a graduated token trades on.
-//
-// Unlike the pool constructors this one cannot derive the fee: the curve's fee
-// schedule is not modelled here, so feeBps stays the caller's. What it does do
-// is refuse the two curves that must not be quoted at all:
-//
-//   - a COMPLETE curve has migrated to the Pump-AMM and no longer trades here,
-//     so its reserves describe a market that has moved on;
-//   - a curve with a non-zero QuoteMint is NOT priced in lamports, and its
-//     reserve fields are named for SOL, so quoting it as SOL is a unit error
-//     that nothing else in the type system catches.
+// FromBondingCurve builds a Quoter for a pump.fun PRE-graduation curve. feeBps
+// stays the caller's, the schedule is not modelled here. A complete curve and a
+// non-SOL-quoted one are both refused; the latter is an uncatchable unit error.
 func FromBondingCurve(curve *models.BondingCurve, feeBps uint64) (Quoter, error) {
 	if curve == nil {
 		return nil, fmt.Errorf("%w: nil bonding curve", ErrPoolNotQuotable)
@@ -306,29 +242,16 @@ func FromBondingCurve(curve *models.BondingCurve, feeBps uint64) (Quoter, error)
 	return PumpBondingCurve(curve.VirtualTokenReserves, curve.VirtualSolReserves, feeBps), nil
 }
 
-// FluxBeamSide is one side of a FluxBeam pool: its vault token-account balance
-// and the Token-2022 transfer fee that side's mint charges.
-//
-// TransferFee is nil when the mint charges nothing, which is the common case and
-// every classic-Token mint. It is a field rather than an option because the
-// program deducts it and a quote that skips it is wrong by whole percent.
+// FluxBeamSide is one side of a FluxBeam pool: its vault balance and the
+// Token-2022 transfer fee its mint charges, nil for a mint that charges nothing.
 type FluxBeamSide struct {
 	Reserve     uint64
 	TransferFee *models.TransferFeeConfig
 }
 
-// FromFluxBeamPool builds a Quoter for a FluxBeam pool.
-//
-// The vault balances are the caller's to fetch; unlike the Raydium venues
-// nothing is netted out of them, since FluxBeam tracks no fee accrual inside the
-// vaults. The two sides can be under different token programs, so their transfer
-// fees are read per side.
-//
-// epoch is the current epoch, which selects between a mint's staged fee settings.
-//
-// A pool whose curve this package does not model is refused at quote time rather
-// than here, because the curve is the only thing that makes it unquotable and
-// the error says which curve it was.
+// FromFluxBeamPool builds a Quoter for a FluxBeam pool. Nothing is netted out of
+// the vault balances. epoch selects between a mint's staged fee settings; a curve
+// this package does not model is refused at quote time, where the error names it.
 func FromFluxBeamPool(pool *models.FluxBeamPool, a, b FluxBeamSide, epoch uint64) (Quoter, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("%w: nil FluxBeam pool", ErrPoolNotQuotable)
