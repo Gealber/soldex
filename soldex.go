@@ -1,7 +1,8 @@
 // Package soldex is a single source of truth for Solana DEX swap math: on-chain
 // account decoders (models/), fixed-point primitives (math/), and exact-in swap
 // quotes (quote/) for Orca Whirlpool, Meteora DLMM, Meteora DAMM v2 (cp-amm),
-// Raydium CLMM, Raydium CP-Swap (constant-product AMM), and Pump-AMM.
+// Raydium CLMM, Raydium CP-Swap (constant-product AMM), Pump-AMM and the pump.fun
+// bonding curve.
 //
 // Each venue's quote lives in its own quote/<dex> package with the exact state it
 // needs (bin arrays, tick arrays, oracles, fee configs). This top-level package
@@ -15,6 +16,7 @@ import (
 	"github.com/Gealber/soldex/quote/dlmm"
 	"github.com/Gealber/soldex/quote/orca"
 	"github.com/Gealber/soldex/quote/pump"
+	"github.com/Gealber/soldex/quote/pumpbc"
 	"github.com/Gealber/soldex/quote/raycpmm"
 	"github.com/Gealber/soldex/quote/raydium"
 )
@@ -67,6 +69,9 @@ func Raydium(pool raydium.SwapPool, ticks raydium.TickProvider) Quoter {
 
 // DAMMConcentrated binds a Meteora DAMM v2 concentrated-liquidity pool
 // (CollectFeeMode BothToken or OnlyB). aToB maps to TradeDirectionAtoB.
+//
+// A CollectFeeMode 2 (Compounding) pool is refused with damm.ErrCompoundingPool
+// rather than quoted on the wrong curve.
 func DAMMConcentrated(pool damm.ConcentratedPool) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		dir := damm.TradeDirectionBtoA
@@ -78,16 +83,19 @@ func DAMMConcentrated(pool damm.ConcentratedPool) Quoter {
 }
 
 // RaydiumCPMM binds a Raydium CP-Swap (CPMMoo8L…) constant-product pool by its two
-// net vault reserves — the raw vault balances minus the protocol+fund fees the pool
-// tracks; use models.RaydiumCPMMPool.NetReserves to compute them — and the trade fee
-// rate (out of 1e6, from the linked AmmConfig). aToB swaps token_0 in for token_1
-// out; !aToB reverses.
-func RaydiumCPMM(reserve0, reserve1, tradeFeeRate uint64) Quoter {
+// net vault reserves — the raw vault balances minus the protocol, fund AND creator
+// fees the pool tracks; use models.RaydiumCPMMPool.NetReserves to compute them —
+// and the total input-side fee rate (out of 1e6). aToB swaps token_0 in for
+// token_1 out; !aToB reverses.
+//
+// feeRate must be the AmmConfig trade fee rate PLUS the pool's effective creator
+// fee rate (models.RaydiumCPMMPool.EffectiveCreatorFeeRate).
+func RaydiumCPMM(reserve0, reserve1, feeRate uint64) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
 		if aToB {
-			return raycpmm.SwapBaseInput(reserve0, reserve1, amountIn, tradeFeeRate), nil
+			return raycpmm.SwapBaseInput(reserve0, reserve1, amountIn, feeRate), nil
 		}
-		return raycpmm.SwapBaseInput(reserve1, reserve0, amountIn, tradeFeeRate), nil
+		return raycpmm.SwapBaseInput(reserve1, reserve0, amountIn, feeRate), nil
 	})
 }
 
@@ -106,5 +114,48 @@ func Pump(baseReserve, quoteReserve, feeBps uint64) Quoter {
 			return pump.SellExactIn(baseReserve, quoteReserve, amountIn, feeBps), nil
 		}
 		return pump.BuyExactIn(quoteReserve, baseReserve, amountIn, feeBps), nil
+	})
+}
+
+// PumpBondingCurve binds a pump.fun bonding curve (the PRE-graduation curve, not
+// the Pump-AMM pool) by its VIRTUAL reserves and total fee in basis points.
+// aToB == sell (token in, quote out); !aToB == buy (quote in, token out).
+//
+// The curve prices on its virtual reserves, not the real ones — pass
+// BondingCurve.VirtualTokenReserves and VirtualSolReserves. Check
+// BondingCurve.IsSOLQuoted first: a curve carrying a non-zero QuoteMint prices in
+// that mint, not lamports, and the reserve fields say nothing about which.
+func PumpBondingCurve(virtualTokenReserves, virtualQuoteReserves, feeBps uint64) Quoter {
+	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
+		if aToB {
+			return pumpbc.SellExactIn(virtualTokenReserves, virtualQuoteReserves, amountIn, feeBps), nil
+		}
+		return pumpbc.BuyExactIn(virtualQuoteReserves, virtualTokenReserves, amountIn, feeBps), nil
+	})
+}
+
+// DAMMCompounding binds a Meteora DAMM v2 pool that collects fees by COMPOUNDING
+// them back into liquidity (CollectFeeMode 2) — the mode DAMMConcentrated refuses.
+// aToB maps to TradeDirectionAtoB.
+//
+// feeNumerator is out of damm.FeeDenominator (1e9) and must be the fee the pool
+// charges NOW, which for a scheduled pool is not its cliff: resolve it with
+// models.DAMMPool.CurrentBaseFeeNumerator. feeOnInput mirrors the pool's fee mode.
+func DAMMCompounding(
+	tokenAReserve, tokenBReserve, feeNumerator uint64,
+	feeOnInput, hasReferral bool,
+	protocolFeePercent uint8, compoundingFeeBps uint16, referralFeePercent uint8,
+) Quoter {
+	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
+		dir := damm.TradeDirectionBtoA
+		if aToB {
+			dir = damm.TradeDirectionAtoB
+		}
+		res, err := damm.QuoteExactInCompounding(amountIn, tokenAReserve, tokenBReserve, dir,
+			feeNumerator, feeOnInput, hasReferral, protocolFeePercent, compoundingFeeBps, referralFeePercent)
+		if err != nil {
+			return 0, err
+		}
+		return res.OutputAmount, nil
 	})
 }

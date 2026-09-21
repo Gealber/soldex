@@ -82,3 +82,23 @@ func TestConcentratedQuoteRangeViolation(t *testing.T) {
 		t.Fatalf("expected ErrPriceRangeViolation, got %v", err)
 	}
 }
+
+// A compounding pool must be refused, not quoted on the concentrated curve.
+func TestConcentratedQuoteRefusesCompoundingPool(t *testing.T) {
+	pool := ConcentratedPool{
+		SqrtPrice:        big.NewInt(1 << 62),
+		SqrtMinPrice:     big.NewInt(1),
+		SqrtMaxPrice:     new(big.Int).Lsh(big.NewInt(1), 100),
+		Liquidity:        new(big.Int).SetUint64(1_000_000_000_000),
+		CollectFeeMode:   CollectFeeModeCompounding,
+		BaseFeeNumerator: 2_500_000,
+	}
+	if _, err := QuoteConcentratedExactIn(1_000_000, TradeDirectionAtoB, pool); err != ErrCompoundingPool {
+		t.Fatalf("err = %v, want ErrCompoundingPool", err)
+	}
+	// The same pool in a supported mode still quotes.
+	pool.CollectFeeMode = CollectFeeModeBothToken
+	if _, err := QuoteConcentratedExactIn(1_000_000, TradeDirectionAtoB, pool); err != nil {
+		t.Fatalf("BothToken should still quote: %v", err)
+	}
+}

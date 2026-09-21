@@ -31,6 +31,12 @@ var (
 // past the pool's concentrated-liquidity range (mirrors PriceRangeViolation).
 var ErrPriceRangeViolation = errors.New("price range violation")
 
+// ErrCompoundingPool is returned when a CollectFeeMode 2 (Compounding) pool is
+// quoted through the concentrated path. Such a pool folds its fees back into
+// liquidity, so this curve is not the one it runs and the answer would be
+// silently wrong; use QuoteExactInCompounding instead.
+var ErrCompoundingPool = errors.New("damm: pool collects fees by compounding, use QuoteExactInCompounding")
+
 // ConcentratedPool holds the decoded Pool fields needed to quote a
 // concentrated-liquidity swap. All sqrt prices and liquidity are Q64.64 u128s.
 type ConcentratedPool struct {
@@ -53,6 +59,9 @@ type ConcentratedPool struct {
 // QuoteConcentratedExactIn returns the net output amount for an exact-in swap on
 // a concentrated-liquidity DAMM pool, mirroring Pool::get_swap_result_from_exact_input.
 func QuoteConcentratedExactIn(amountIn uint64, dir TradeDirection, pool ConcentratedPool) (uint64, error) {
+	if pool.CollectFeeMode == CollectFeeModeCompounding {
+		return 0, ErrCompoundingPool
+	}
 	feeNumerator, err := totalTradingFeeNumerator(pool)
 	if err != nil {
 		return 0, err
