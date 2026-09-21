@@ -261,3 +261,31 @@ func FromPumpPool(
 	feeBps := models.PumpTotalFeeBps(global, feeCfg, pool, baseVaultBalance, quoteReserve, baseSupply)
 	return Pump(baseVaultBalance, quoteReserve, feeBps), nil
 }
+
+// FromBondingCurve builds a Quoter for a pump.fun bonding curve — the
+// PRE-graduation curve, not the Pump-AMM pool a graduated token trades on.
+//
+// Unlike the pool constructors this one cannot derive the fee: the curve's fee
+// schedule is not modelled here, so feeBps stays the caller's. What it does do
+// is refuse the two curves that must not be quoted at all:
+//
+//   - a COMPLETE curve has migrated to the Pump-AMM and no longer trades here,
+//     so its reserves describe a market that has moved on;
+//   - a curve with a non-zero QuoteMint is NOT priced in lamports, and its
+//     reserve fields are named for SOL, so quoting it as SOL is a unit error
+//     that nothing else in the type system catches.
+func FromBondingCurve(curve *models.BondingCurve, feeBps uint64) (Quoter, error) {
+	if curve == nil {
+		return nil, fmt.Errorf("%w: nil bonding curve", ErrPoolNotQuotable)
+	}
+	if curve.Complete {
+		return nil, fmt.Errorf("%w: bonding curve has migrated to the Pump-AMM", ErrPoolNotQuotable)
+	}
+	if !curve.IsSOLQuoted() {
+		return nil, fmt.Errorf("%w: bonding curve is quoted in %s, not SOL", ErrPoolNotQuotable, curve.QuoteMint)
+	}
+	if curve.VirtualTokenReserves == 0 || curve.VirtualSolReserves == 0 {
+		return nil, fmt.Errorf("%w: bonding curve has an empty virtual reserve", ErrPoolNotQuotable)
+	}
+	return PumpBondingCurve(curve.VirtualTokenReserves, curve.VirtualSolReserves, feeBps), nil
+}

@@ -600,3 +600,60 @@ func TestFromPumpPoolRefusals(t *testing.T) {
 		t.Fatal("nil pool must be refused")
 	}
 }
+
+func bondingCurve() *models.BondingCurve {
+	return &models.BondingCurve{
+		VirtualTokenReserves: 1_000_000_000_000_000,
+		VirtualSolReserves:   30_000_000_000,
+		RealTokenReserves:    800_000_000_000_000,
+		TokenTotalSupply:     1_000_000_000_000_000,
+	}
+}
+
+func TestFromBondingCurveQuotesBothDirections(t *testing.T) {
+	q, err := FromBondingCurve(bondingCurve(), 100)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	buy, err := q.QuoteExactIn(1_000_000_000, false)
+	if err != nil || buy == 0 {
+		t.Fatalf("buy = %d, err = %v", buy, err)
+	}
+	sell, err := q.QuoteExactIn(1_000_000_000, true)
+	if err != nil || sell == 0 {
+		t.Fatalf("sell = %d, err = %v", sell, err)
+	}
+	// The fee must reach the quote.
+	free, err := FromBondingCurve(bondingCurve(), 0)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if b, _ := free.QuoteExactIn(1_000_000_000, false); b <= buy {
+		t.Fatalf("fee-free buy %d should beat fee'd %d", b, buy)
+	}
+}
+
+// The two curves that must never be quoted: one that has migrated, and one
+// whose reserves are not lamports at all.
+func TestFromBondingCurveRefusals(t *testing.T) {
+	done := bondingCurve()
+	done.Complete = true
+	if _, err := FromBondingCurve(done, 100); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a migrated curve no longer trades here and must be refused")
+	}
+
+	foreign := bondingCurve()
+	foreign.QuoteMint = solana.MustPublicKeyFromBase58("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+	if _, err := FromBondingCurve(foreign, 100); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a non-SOL-quoted curve must be refused: its reserves are not lamports")
+	}
+
+	empty := bondingCurve()
+	empty.VirtualSolReserves = 0
+	if _, err := FromBondingCurve(empty, 100); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("an empty virtual reserve must be refused")
+	}
+	if _, err := FromBondingCurve(nil, 100); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil curve must be refused")
+	}
+}
