@@ -2,6 +2,8 @@
 package damm
 
 import (
+	"errors"
+
 	dammmath "github.com/Gealber/soldex/math/damm"
 )
 
@@ -95,7 +97,39 @@ func QuoteExactInCompounding(
 	}, nil
 }
 
-// QuoteExactOutCompounding calculates swap input for exact-out compounding AMM swap.
+// ErrInsufficientLiquidity is returned when an exact-out quote asks for at least
+// the whole reserve of the output token. The constant-product curve needs an
+// unbounded input for that, and the subtraction would otherwise wrap.
+var ErrInsufficientLiquidity = errors.New("damm: amount out is not less than the output reserve")
+
+// compoundingInputForOutput is the curve input that yields exactly amountOut,
+// before any fee. Rounds up, so the pool never comes out short.
+func compoundingInputForOutput(tokenA, tokenB, amountOut uint64, dir TradeDirection) (uint64, error) {
+	if dir == TradeDirectionAtoB {
+		if amountOut >= tokenB {
+			return 0, ErrInsufficientLiquidity
+		}
+		return compoundingAtoBFromAmountOut(tokenA, tokenB, amountOut)
+	}
+	if amountOut >= tokenA {
+		return 0, ErrInsufficientLiquidity
+	}
+	return compoundingBtoAFromAmountOut(tokenA, tokenB, amountOut)
+}
+
+// QuoteExactOutCompounding calculates the input required for an exact-out swap on
+// a compounding AMM pool.
+//
+// Both fee modes have to gross UP, because the caller is telling us what they want
+// to RECEIVE and the fee is paid on top of that:
+//
+//   - fee on input: the curve needs `net`, so the caller must send
+//     `net / (1 - fee)` for `net` to survive the fee and reach the curve.
+//   - fee on output: the caller wants `amountOut` NET, so the curve must produce
+//     `amountOut / (1 - fee)` gross, and the input follows from that gross figure.
+//
+// Reversing either direction — returning the net curve input, or sizing the input
+// off the net output — understates what the swap actually costs by the fee.
 func QuoteExactOutCompounding(
 	amountOut uint64,
 	tokenAReserve uint64,
@@ -108,66 +142,51 @@ func QuoteExactOutCompounding(
 	compoundingFeeBps uint16,
 	referralFeePercent uint8,
 ) (*SwapResult, error) {
-	actualProtocolFee := uint64(0)
-	actualClaimingFee := uint64(0)
-	actualCompoundingFee := uint64(0)
-	actualReferralFee := uint64(0)
+	var (
+		includedFeeInputAmount uint64
+		excludedFeeInputAmount uint64
+		tradingFee             uint64
+	)
 
-	var amountInBeforeFee uint64
-	var err error
-
-	if !feeOnInput {
-		inputAmount := uint64(0)
-		if tradeDirection == TradeDirectionAtoB {
-			inputAmount, err = compoundingAtoBFromAmountOut(tokenAReserve, tokenBReserve, amountOut)
-		} else {
-			inputAmount, err = compoundingBtoAFromAmountOut(tokenAReserve, tokenBReserve, amountOut)
-		}
+	if feeOnInput {
+		// The curve consumes the fee-excluded amount; the caller pays it plus the fee.
+		net, err := compoundingInputForOutput(tokenAReserve, tokenBReserve, amountOut, tradeDirection)
 		if err != nil {
 			return nil, err
 		}
-
-		feeRes, err := GetFeeOnAmount(inputAmount, tradeFeeNumerator, protocolFeePercent, compoundingFeeBps, referralFeePercent, hasReferral)
+		included, fee, err := GetIncludedFeeAmount(tradeFeeNumerator, net)
 		if err != nil {
 			return nil, err
 		}
-		amountInBeforeFee = feeRes.Amount
-		actualProtocolFee = feeRes.ProtocolFee
-		actualClaimingFee = feeRes.ClaimingFee
-		actualCompoundingFee = feeRes.CompoundingFee
-		actualReferralFee = feeRes.ReferralFee
+		includedFeeInputAmount = included
+		excludedFeeInputAmount = net
+		tradingFee = fee
 	} else {
-		inputAmount := uint64(0)
-		if tradeDirection == TradeDirectionAtoB {
-			inputAmount, err = compoundingAtoBFromAmountOut(tokenAReserve, tokenBReserve, amountOut)
-		} else {
-			inputAmount, err = compoundingBtoAFromAmountOut(tokenAReserve, tokenBReserve, amountOut)
-		}
+		// The fee is taken out of the output, so the curve must produce more than
+		// the caller asked to receive.
+		grossOut, fee, err := GetIncludedFeeAmount(tradeFeeNumerator, amountOut)
 		if err != nil {
 			return nil, err
 		}
+		input, err := compoundingInputForOutput(tokenAReserve, tokenBReserve, grossOut, tradeDirection)
+		if err != nil {
+			return nil, err
+		}
+		includedFeeInputAmount = input
+		excludedFeeInputAmount = input
+		tradingFee = fee
+	}
 
-		feeRes, err := GetFeeOnAmount(inputAmount, tradeFeeNumerator, protocolFeePercent, compoundingFeeBps, referralFeePercent, hasReferral)
-		if err != nil {
-			return nil, err
-		}
-		amountInBeforeFee = inputAmount
-		actualProtocolFee = feeRes.ProtocolFee
-		actualClaimingFee = feeRes.ClaimingFee
-		actualCompoundingFee = feeRes.CompoundingFee
-		actualReferralFee = feeRes.ReferralFee
+	split, err := SplitTradingFees(tradingFee, protocolFeePercent, compoundingFeeBps, referralFeePercent, hasReferral)
+	if err != nil {
+		return nil, err
 	}
 
 	return &SwapResult{
-		IncludedFeeInputAmount: amountInBeforeFee,
-		ExcludedFeeInputAmount: amountInBeforeFee,
+		IncludedFeeInputAmount: includedFeeInputAmount,
+		ExcludedFeeInputAmount: excludedFeeInputAmount,
 		OutputAmount:           amountOut,
 		AmountLeft:             0,
-		SplitFees: SplitFees{
-			ClaimingFee:    actualClaimingFee,
-			CompoundingFee: actualCompoundingFee,
-			ProtocolFee:    actualProtocolFee,
-			ReferralFee:    actualReferralFee,
-		},
+		SplitFees:              split,
 	}, nil
 }
