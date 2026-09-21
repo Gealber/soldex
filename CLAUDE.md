@@ -100,15 +100,60 @@ Gate before every commit:
 
     gofmt -l . && go vet ./... && go test ./... && go test -race ./...
 
-## Working in steps
+## Working in steps (the loop)
 
-Long changes go in a plan file with checkboxes, outside the repo, one step per
-iteration, with a log appended as each lands. It survives a lost session and it
-makes a blocked step visible instead of silently skipped.
+Anything bigger than one change runs as a loop: a plan file, one step per
+iteration, each step landing green and committed before the next begins. Both
+large pieces of work in this repo — the upstream fee audit and the From* layer —
+were done this way.
 
-Two things that kept it honest here: a step that cannot be finished stays
-unticked with the evidence recorded, and a step whose finding contradicts the
-plan gets the plan corrected rather than the finding shaded.
+### The plan file
+
+Lives OUTSIDE the repo (it is working state, not shipped code), as a checklist:
+
+    - [ ] C. FromDLMMPool(pool, currentTimestamp, bins)
+
+Write down for each step what it changes and what would make it wrong. Add a
+`## Log` at the bottom and append a line as each step lands — what was done, what
+surprised you, what is still open. The log is what makes the work resumable after
+a lost session, and it is where a correction goes when a finding contradicts the
+plan. Correct the plan; do not shade the finding.
+
+Alongside the steps, record the rules the loop must hold to (test gate, commit
+style, which repos are in scope). An agent re-reading the plan cold needs them.
+
+### One iteration
+
+1. Take the FIRST unchecked step. Do not skip ahead to an easier one.
+2. Implement it.
+3. Write the test, then **break the fix and watch the test fail**. Put the two
+   numbers in the report: "reverting this gives 29,945,434 instead of 27,438,436".
+4. Check the test could have failed for the right reason. A fixture where the
+   feature under test is inert — a fee that rounds to zero, a pool too deep for
+   price impact — passes whether the code is right or wrong. Scale the fixture
+   until the feature moves the number, and assert that it does.
+5. Change ONE variable per assertion. A test that varies two at once can pass or
+   fail for the wrong reason; one here compared a fee change against a fixture
+   that also moved the reserve ratio, and the ratio swamped the fee.
+6. `gofmt -l . && go vet ./... && go test ./... && go test -race ./...`
+7. Commit in the repo's style.
+8. Tick the box, append the log line.
+
+### Blocked steps
+
+A step that cannot be finished stays **unticked**, with the evidence recorded:
+what was tried, what was ruled out, and what would unblock it. Two steps here
+ended that way and both were worth more unticked than faked — one because two
+candidate formulas were falsified against real swaps, one because the check
+needed a funded wallet.
+
+Never tick a box by weakening the step to fit what you managed.
+
+### Stopping
+
+Stop when every box is ticked, or when the remaining steps are blocked on
+something outside the loop. Report which, and do not schedule further iterations
+that cannot make progress.
 
 ## Local tools
 
