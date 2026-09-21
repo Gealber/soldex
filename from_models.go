@@ -6,6 +6,7 @@ import (
 
 	"github.com/Gealber/soldex/models"
 	"github.com/Gealber/soldex/quote/damm"
+	"github.com/Gealber/soldex/quote/dlmm"
 )
 
 // The From* constructors build a Quoter straight from a decoded model, so a
@@ -68,3 +69,44 @@ func FromDAMMPool(pool *models.DAMMPool, currentPoint uint64) (Quoter, error) {
 		VariableFeeControl:    fees.DynamicFee.VariableFeeControl,
 	}), nil
 }
+
+// FromDLMMPool builds a Quoter for a Meteora DLMM pool.
+//
+// currentTimestamp is the swap's block time; the variable fee decays against it,
+// so a stale one over-states the fee. bins is the cached bin-array window the
+// quote walks — it stops at the edge of what the provider knows, so a window too
+// narrow silently truncates a large swap.
+//
+// A pair whose Status is not Enabled is refused: it cannot trade, and a number
+// for a swap that would revert is worse than no number.
+func FromDLMMPool(pool *models.DLMMPool, currentTimestamp int64, bins dlmm.BinProvider) (Quoter, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%w: nil DLMM pool", ErrPoolNotQuotable)
+	}
+	if pool.Status != dlmmPairStatusEnabled {
+		return nil, fmt.Errorf("%w: DLMM pair status %d", ErrPoolNotQuotable, pool.Status)
+	}
+	sp := pool.Parameters
+	vp := pool.VParameters
+	return DLMM(dlmm.SwapPool{
+		ActiveID: pool.ActiveID,
+		BinStep:  pool.BinStep,
+
+		BaseFactor:               sp.BaseFactor,
+		BaseFeePowerFactor:       sp.BaseFeePowerFactor,
+		VariableFeeControl:       sp.VariableFeeControl,
+		MaxVolatilityAccumulator: sp.MaxVolatilityAccumulator,
+		FilterPeriod:             sp.FilterPeriod,
+		DecayPeriod:              sp.DecayPeriod,
+		ReductionFactor:          sp.ReductionFactor,
+		CollectFeeMode:           sp.CollectFeeMode,
+
+		VolatilityAccumulator: vp.VolatilityAccumulator,
+		VolatilityReference:   vp.VolatilityReference,
+		IndexReference:        vp.IndexReference,
+		LastUpdateTimestamp:   vp.LastUpdateTimestamp,
+	}, currentTimestamp, bins), nil
+}
+
+// dlmmPairStatusEnabled is lb_clmm's PairStatus::Enabled.
+const dlmmPairStatusEnabled uint8 = 0

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Gealber/soldex/models"
 	"github.com/Gealber/soldex/quote/damm"
+	"github.com/Gealber/soldex/quote/dlmm"
 )
 
 // dammPool builds a decoded pool with a concentrated range wide enough to quote
@@ -150,5 +151,105 @@ func TestFromDAMMPoolRefusesUnmodelledSchedule(t *testing.T) {
 	}
 	if _, err := FromDAMMPool(nil, 0); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatalf("nil pool: err = %v, want ErrPoolNotQuotable", err)
+	}
+}
+
+// dlmmBins is a bin window with liquidity on the Y side of the active bin.
+func dlmmBins() dlmm.BinProvider {
+	// Deep enough that a sub-basis-point variable fee is still worth whole units;
+	// on a tiny bin it rounds to zero and stops discriminating.
+	bins := map[int32]dlmm.BinReserves{
+		0: {AmountY: 50_000_000}, -1: {AmountY: 50_000_000}, -2: {AmountY: 50_000_000},
+	}
+	return func(id int32) (dlmm.BinReserves, bool) {
+		r, ok := bins[id]
+		return r, ok
+	}
+}
+
+func dlmmModel(status uint8) *models.DLMMPool {
+	p := &models.DLMMPool{ActiveID: 0, BinStep: 10, Status: status}
+	p.Parameters.BaseFactor = 5_000
+	p.Parameters.VariableFeeControl = 40_000
+	p.Parameters.MaxVolatilityAccumulator = 350_000
+	p.Parameters.FilterPeriod = 30
+	p.Parameters.DecayPeriod = 600
+	p.Parameters.ReductionFactor = 5_000
+	p.VParameters.VolatilityAccumulator = 100_000
+	p.VParameters.IndexReference = 0
+	p.VParameters.LastUpdateTimestamp = 1_700_000_000
+	return p
+}
+
+// The constructor must carry EVERY fee parameter across. Dropping any one of
+// them silently changes the fee, so this compares it against the same pool
+// mapped by hand.
+func TestFromDLMMPoolMapsEveryFeeParameter(t *testing.T) {
+	pool := dlmmModel(0)
+	const ts = int64(1_700_000_300)
+
+	q, err := FromDLMMPool(pool, ts, dlmmBins())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	got, err := q.QuoteExactIn(20_000_000, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	sp, vp := pool.Parameters, pool.VParameters
+	want, err := DLMM(dlmm.SwapPool{
+		ActiveID: pool.ActiveID, BinStep: pool.BinStep,
+		BaseFactor: sp.BaseFactor, BaseFeePowerFactor: sp.BaseFeePowerFactor,
+		VariableFeeControl:       sp.VariableFeeControl,
+		MaxVolatilityAccumulator: sp.MaxVolatilityAccumulator,
+		FilterPeriod:             sp.FilterPeriod, DecayPeriod: sp.DecayPeriod,
+		ReductionFactor: sp.ReductionFactor, CollectFeeMode: sp.CollectFeeMode,
+		VolatilityAccumulator: vp.VolatilityAccumulator,
+		VolatilityReference:   vp.VolatilityReference,
+		IndexReference:        vp.IndexReference,
+		LastUpdateTimestamp:   vp.LastUpdateTimestamp,
+	}, ts, dlmmBins()).QuoteExactIn(20_000_000, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if got != want {
+		t.Fatalf("constructor quoted %d, hand-mapped pool quoted %d — a parameter was dropped", got, want)
+	}
+	if got == 0 {
+		t.Fatal("fixture quoted zero, so it cannot detect a dropped parameter")
+	}
+}
+
+// A fee parameter that is actually load-bearing: with no variable fee the quote
+// must differ, which is what makes the mapping test above meaningful.
+func TestFromDLMMPoolFeeParametersAreLoadBearing(t *testing.T) {
+	const ts = int64(1_700_000_300)
+	withVar, err := FromDLMMPool(dlmmModel(0), ts, dlmmBins())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	flat := dlmmModel(0)
+	flat.Parameters.VariableFeeControl = 0
+	flat.VParameters.VolatilityAccumulator = 0
+	noVar, err := FromDLMMPool(flat, ts, dlmmBins())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	a, _ := withVar.QuoteExactIn(20_000_000, true)
+	b, _ := noVar.QuoteExactIn(20_000_000, true)
+	if a == b {
+		t.Fatalf("variable fee is inert on this fixture (%d both), so the mapping test proves little", a)
+	}
+}
+
+// A disabled pair cannot trade, so quoting it returns a number for a swap that
+// would revert.
+func TestFromDLMMPoolRefusesDisabledPair(t *testing.T) {
+	if _, err := FromDLMMPool(dlmmModel(1), 0, dlmmBins()); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a non-enabled pair must be refused")
+	}
+	if _, err := FromDLMMPool(nil, 0, dlmmBins()); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil pool must be refused")
 	}
 }
