@@ -37,9 +37,15 @@ all of which `quote/raydium` now models:
   out of the **output**. On a curve with real price impact that is strictly worse for the
   trader than the same rate on the input.
 
-Measured on chain 2026-08-05: of 178,353 pools, **547** carry a non-zero `dynamic_fee_info`,
-**794** have `fee_on != 0`, and **354** `LimitOrderState` accounts exist. Rare — but a
-fee-on-output pool is exactly the shape that reads as free arbitrage if you ignore it.
+These are not a rarity to be skipped, and they are spreading: `fee_on != 0` went from 794
+pools to **9,706** (about 5% of them) in six weeks, and non-zero `dynamic_fee_info` from 547
+to **1,208**. A fee-on-output pool is exactly the shape that reads as free arbitrage if you
+ignore it.
+
+The port is checked against the program itself, not just unit-tested:
+`quote/raydium/clmm_chain_test.go` asserts the exact amount a real swap returned on a pool
+running both a dynamic fee and a non-zero `fee_on`, with a companion test that fails if
+either feature stops moving the number on that vector.
 
 `QuoteExactIn` also refuses a pool whose `status` bit4 disables swaps, rather than returning
 a tradable-looking number for a swap that cannot land.
@@ -55,7 +61,48 @@ soldex.go       unified Quoter over all venues
 
 ## Usage
 
-Call a venue's quote package directly with its state:
+### One door for every venue
+
+If you hold accounts from several programs, dispatch on the owner an RPC already
+gives you. Adding a venue costs you nothing — the case lives in soldex:
+
+```go
+q, err := soldex.FromAccount(acct.Owner, acct.Data, soldex.Aux{
+    Now:           uint64(time.Now().Unix()),
+    RaydiumTicks:  ticks,
+    RaydiumConfig: ammConfig,
+})
+out, err := q.QuoteExactIn(amountIn, aToB /*true = A→B*/)
+```
+
+Dispatching on the **owner** is what makes this safe: Raydium CLMM and CP-Swap share
+an account discriminator, so choosing a decoder by discriminator alone picks the
+wrong one for whichever you check second.
+
+### Per venue
+
+When you already know the venue, build from the decoded model:
+
+```go
+q, err := soldex.FromDAMMPool(pool, currentPoint)
+q, err := soldex.FromDLMMPool(pool, ts, bins)
+q, err := soldex.FromWhirlpool(pool, oracle, ticks, now)
+q, err := soldex.FromRaydiumCLMM(pool, cfg, ticks, blockTime)
+q, err := soldex.FromRaydiumCPMM(pool, cfg, vault0, vault1)
+q, err := soldex.FromPumpPool(pool, global, feeCfg, baseVault, quoteVault, supply)
+q, err := soldex.FromBondingCurve(curve, feeBps)
+```
+
+**Prefer these over filling a quote struct yourself.** They derive every fee from the
+pool rather than accepting one, and they return an error instead of a misleading
+number when a pool cannot be quoted — a schedule this package does not model, a
+disabled pool, a missing linked config, an empty side. A hand-filled quote struct
+takes a zero fee without complaint, and a zero fee over-states every output.
+
+### Underneath
+
+The quote packages stay pure and RPC-free — decode with `models`, feed state in, get
+an exact-in output. Providing fresh bin/tick state is the caller's job:
 
 ```go
 out, err := dlmm.QuoteExactIn(pool, swapForY, amountIn, ts, bins)
@@ -63,14 +110,8 @@ out, err := orca.QuoteExactIn(pool, aToB, amountIn, ticks)
 out      := pump.SellExactIn(baseReserve, quoteReserve, amountIn, feeBps)
 ```
 
-…or hold a heterogeneous set through the uniform `Quoter` (each adapter binds a
-decoded pool plus its auxiliary state; `aToB` selects direction against the pool's
-canonical token ordering):
+## Contributing
 
-```go
-q := soldex.Orca(pool, ticks)                     // or DLMM / DAMMConcentrated / Raydium / Pump
-out, err := q.QuoteExactIn(amountIn, aToB /*true = A→B*/)
-```
-
-The quote packages are pure and RPC-free — decode accounts with `models`, feed the
-state in, get an exact-in output. Providing fresh bin/tick state is the caller's job.
+`CLAUDE.md` is the working agreement for changing this repo — how quote math is
+verified against the chain, what a test has to prove, and how larger changes are
+run in steps. Read it before a first change.

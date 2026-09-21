@@ -7,8 +7,16 @@
 // Each venue's quote lives in its own quote/<dex> package with the exact state it
 // needs (bin arrays, tick arrays, oracles, fee configs). This top-level package
 // adds a uniform Quoter over them so a caller can hold a heterogeneous set of pools
-// and quote them through one call site — the adapter constructors bind a decoded
-// pool plus its auxiliary state and expose the common signature.
+// and quote them through one call site.
+//
+// Start with FromAccount, which decodes an account and dispatches on its owning
+// program, or the per-venue From* constructors when the venue is already known.
+// Those derive every fee from the pool and refuse a pool that cannot be quoted.
+//
+// The adapters below (DLMM, Orca, Raydium, ...) are the layer underneath: they
+// bind an already-assembled quote struct. They accept whatever fee you give them,
+// including none, so prefer a From* constructor unless you are deliberately
+// overriding something.
 package soldex
 
 import (
