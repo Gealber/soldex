@@ -50,12 +50,24 @@ type FluxBeamFees struct {
 type FluxBeamPool struct {
 	Address solana.PublicKey
 
+	// BumpSeed is the seed the pool's authority was derived with. The program
+	// derives the authority from it rather than searching for a canonical bump,
+	// so Authority uses it as stored.
+	BumpSeed uint8
+
+	// TokenProgram owns the pool mint and the fee account. It does NOT decide
+	// the two sides: a pool can hold one classic vault and one Token-2022 vault,
+	// and the program accepts either. Read each side's program off its vault.
 	TokenProgram solana.PublicKey
 	VaultA       solana.PublicKey
 	VaultB       solana.PublicKey
 	PoolMint     solana.PublicKey
 	MintA        solana.PublicKey
 	MintB        solana.PublicKey
+
+	// PoolFeeAccount receives the owner fee. The swap instruction checks it
+	// against this field, so a swap cannot be built without it.
+	PoolFeeAccount solana.PublicKey
 
 	Fees FluxBeamFees
 
@@ -80,13 +92,15 @@ func DecodeFluxBeamPool(data []byte, address solana.PublicKey) (*FluxBeamPool, e
 	}
 
 	pool := &FluxBeamPool{
-		Address:      address,
-		TokenProgram: solana.PublicKeyFromBytes(data[3:35]),
-		VaultA:       solana.PublicKeyFromBytes(data[35:67]),
-		VaultB:       solana.PublicKeyFromBytes(data[67:99]),
-		PoolMint:     solana.PublicKeyFromBytes(data[99:131]),
-		MintA:        solana.PublicKeyFromBytes(data[131:163]),
-		MintB:        solana.PublicKeyFromBytes(data[163:195]),
+		Address:        address,
+		BumpSeed:       data[2],
+		TokenProgram:   solana.PublicKeyFromBytes(data[3:35]),
+		VaultA:         solana.PublicKeyFromBytes(data[35:67]),
+		VaultB:         solana.PublicKeyFromBytes(data[67:99]),
+		PoolMint:       solana.PublicKeyFromBytes(data[99:131]),
+		MintA:          solana.PublicKeyFromBytes(data[131:163]),
+		MintB:          solana.PublicKeyFromBytes(data[163:195]),
+		PoolFeeAccount: solana.PublicKeyFromBytes(data[195:227]),
 		Fees: FluxBeamFees{
 			TradeFeeNumerator:           binary.LittleEndian.Uint64(data[227:235]),
 			TradeFeeDenominator:         binary.LittleEndian.Uint64(data[235:243]),
@@ -102,4 +116,15 @@ func DecodeFluxBeamPool(data []byte, address solana.PublicKey) (*FluxBeamPool, e
 	copy(pool.Calculator[:], data[292:324])
 
 	return pool, nil
+}
+
+// Authority is the pool's transfer authority, which owns both vaults and signs
+// the swap's token transfers.
+//
+// Derived from the stored bump, not searched for: the program calls
+// create_program_address with what the account carries, so a canonical bump
+// found here would be the wrong account for any pool whose bump is not the
+// canonical one.
+func (p *FluxBeamPool) Authority() (solana.PublicKey, error) {
+	return solana.CreateProgramAddress([][]byte{p.Address.Bytes(), {p.BumpSeed}}, solana.MPK(FluxBeamProgramID))
 }

@@ -65,3 +65,59 @@ func TestDecodeFluxBeamPoolLiveAccount(t *testing.T) {
 		t.Fatal("vaults and pool mint must decode to real keys")
 	}
 }
+
+// A devnet pool, with its authority and its two vault programs taken from the
+// vault accounts rather than from this one. That makes the bump a real check:
+// the authority only comes out right if bump_seed is read from offset 2.
+// 77KQdRPrmzR4731cvDuM1sSPN6DcDaxsSH6aEyYwXjjC
+const (
+	fluxBeamDevnetAccount   = "AQH/Bt324e51j94YQl285GzN2rYa/E2DuQ0n/r35KNihi/xJRW6ssubS+Vc0vBTSh/t7O1q1Lod0MlHiXdaVS1wabCCOGqCLFfoz1hzYuIASOzGtdAURILZPuv/b+YgOZwSJOxtCJDVPsqNHbZEwIuu/Ue5xRhueYM8YxKKk83ZkQawGm4hX/quBhPtof2NGGMA12sQ53BrrO1WYoPAAAAAAASabi2EDsz70kWj9ok7Rum0RxrR15mLnfCooftOKQOl3dLrvMHt+8GfUy04d9PINhwsExefOGlrdRGrWa8LXiacUAAAAAAAAAOgDAAAAAAAABQAAAAAAAADoAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAOgDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	fluxBeamDevnetPool      = "77KQdRPrmzR4731cvDuM1sSPN6DcDaxsSH6aEyYwXjjC"
+	fluxBeamDevnetAuthority = "3ifZ3jLupGUVjAJdUPdqePwSMGTcH8CSswo7oTrg3Lsp"
+	fluxBeamDevnetFeeAcc    = "8rfct1j8pLf11XcMzuHnaKajiHMVVwiMPatxV6VhEEM4"
+)
+
+func TestFluxBeamPoolAuthorityAndFeeAccount(t *testing.T) {
+	raw, err := base64.StdEncoding.DecodeString(fluxBeamDevnetAccount)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	pool, err := DecodeFluxBeamPool(raw, solana.MPK(fluxBeamDevnetPool))
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	authority, err := pool.Authority()
+	if err != nil {
+		t.Fatalf("authority: %v", err)
+	}
+	if authority.String() != fluxBeamDevnetAuthority {
+		t.Fatalf("Authority() = %s, want %s (the owner of both vaults)", authority, fluxBeamDevnetAuthority)
+	}
+	if pool.PoolFeeAccount.String() != fluxBeamDevnetFeeAcc {
+		t.Fatalf("PoolFeeAccount = %s, want %s", pool.PoolFeeAccount, fluxBeamDevnetFeeAcc)
+	}
+}
+
+// This pool holds one classic vault and one Token-2022 vault while its own
+// TokenProgram is Token-2022, so a caller that takes the sides from
+// TokenProgram builds the swap with the wrong program on one of them.
+func TestFluxBeamPoolTokenProgramIsNotTheSides(t *testing.T) {
+	raw, err := base64.StdEncoding.DecodeString(fluxBeamDevnetAccount)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	pool, err := DecodeFluxBeamPool(raw, solana.MPK(fluxBeamDevnetPool))
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	if !pool.MintA.Equals(solana.WrappedSol) {
+		t.Fatalf("MintA = %s, want WSOL", pool.MintA)
+	}
+	if pool.TokenProgram.Equals(solana.TokenProgramID) {
+		t.Fatalf("TokenProgram = %s, but WSOL is a classic-Token mint on side A", pool.TokenProgram)
+	}
+}
