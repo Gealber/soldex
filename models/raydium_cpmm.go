@@ -68,7 +68,7 @@ type RaydiumCPMMPool struct {
 	// CreatorFeeOn (byte at absolute offset 389) selects which side the creator fee
 	// comes from, an enum over {0, 1, 2}.
 	//
-	// ⚠ THE MAPPING OF THOSE VALUES IS NOT ESTABLISHED — no IDL or SDK carries it,
+	// The mapping of those values is not established: no IDL or SDK carries it,
 	// so EffectiveCreatorFeeRate charges the fee on the INPUT alongside the trade
 	// fee, and callers needing the output-side variant must resolve the enum first.
 	CreatorFeeOn uint8

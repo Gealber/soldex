@@ -27,7 +27,7 @@ var ErrRateLimiterNeedsAmount = errors.New("damm: rate limiter fee depends on th
 // inside the window opening at the pool's activation point, and only B->A (quote
 // in, base out). Outside either, the pool charges its flat cliff fee.
 //
-// ⚠ The IDL documents the fee CURVE but not this gating, so re-check it first if
+// The IDL documents the fee curve but not this gating, so re-check it first if
 // a quote ever disagrees with the chain.
 func (f DAMMBaseFee) RateLimiterApplies(currentPoint, activationPoint uint64, isBtoA bool) bool {
 	if f.Mode != DAMMBaseFeeModeRateLimiter || !isBtoA {

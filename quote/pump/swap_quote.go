@@ -1,8 +1,8 @@
 // Package pump implements the Pump-AMM (pAMMBay…) constant-product swap quote —
 // where pump.fun tokens trade after they graduate off the bonding curve. The pool
 // is plain x*y=k over its two vault balances; the only subtlety is the fee, which
-// is charged on the OUTPUT for a sell (base→quote) and on the INPUT for a buy
-// (quote→base). Compute the total fee (lp+protocol+creator, market-cap tier for
+// is charged on the OUTPUT for a sell (base to quote) and on the INPUT for a buy
+// (quote to base). Compute the total fee (lp+protocol+creator, market-cap tier for
 // graduates) with models.PumpTotalFeeBps and pass it here.
 package pump
 

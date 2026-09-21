@@ -189,7 +189,7 @@ const (
 
 // ClassifyPumpQuoteMint maps a pool's quote mint to its fee schedule class.
 //
-// ⚠ The stablecoin set is NOT readable from chain — neither fee_config nor
+// The stablecoin set is not readable from chain: neither fee_config nor
 // global_config carries a mint list, so the program holds it internally. USDC and
 // USDT are used here because they are the only recognisable stablecoins with a
 // meaningful pool count.
