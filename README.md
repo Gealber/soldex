@@ -17,6 +17,7 @@ venues, decoded straight from on-chain account state.
 | **Orca Whirlpool** | `models` (Whirlpool, oracle, fixed & dynamic tick arrays) | `quote/orca` — adaptive-fee port |
 | **Raydium CLMM** | `models` (PoolState, tick arrays, dynamic-fee info) | `quote/raydium` — limit orders, dynamic fee, fee_on |
 | **Raydium CP-Swap** (CPMMoo8L) | `models` (PoolState, AmmConfig) | `quote/raycpmm` — constant product, fee-on-input |
+| **FluxBeam** (FLUXubRm) | `models` (SwapV1, packed) | `quote/fluxbeam` — constant product, trade + owner fee |
 | **Pump-AMM** (pAMMBay) | `models` (Pool, market-cap fee tiers) | `quote/pump` — constant product |
 | **pump.fun bonding curve** (6EF8rrec) | `models` (BondingCurve) | `quote/pumpbc` — constant product on virtual reserves |
 
@@ -55,8 +56,8 @@ a tradable-looking number for a swap that cannot land.
 ```
 models/         on-chain account decoders (discriminator-checked)
 math/           fixed-point primitives — common, dlmm, damm, orca, raydium
-quote/          exact-in swap math — dlmm, damm, orca, raydium, raycpmm, pump, pumpbc
-soldex.go       unified Quoter over all venues
+quote/          exact-in swap math — dlmm, damm, orca, raydium, raycpmm, fluxbeam, pump, pumpbc
+soldex.go       unified Quoter, From* constructors and FromAccount dispatch
 ```
 
 ## Usage
@@ -89,6 +90,7 @@ q, err := soldex.FromDLMMPool(pool, ts, bins)
 q, err := soldex.FromWhirlpool(pool, oracle, ticks, now)
 q, err := soldex.FromRaydiumCLMM(pool, cfg, ticks, blockTime)
 q, err := soldex.FromRaydiumCPMM(pool, cfg, vault0, vault1)
+q, err := soldex.FromFluxBeamPool(pool, vaultA, vaultB)
 q, err := soldex.FromPumpPool(pool, global, feeCfg, baseVault, quoteVault, supply)
 q, err := soldex.FromBondingCurve(curve, feeBps)
 ```
@@ -109,6 +111,22 @@ out, err := dlmm.QuoteExactIn(pool, swapForY, amountIn, ts, bins)
 out, err := orca.QuoteExactIn(pool, aToB, amountIn, ticks)
 out      := pump.SellExactIn(baseReserve, quoteReserve, amountIn, feeBps)
 ```
+
+## FluxBeam: the owner fee is not a rounding term
+
+FluxBeam is an SPL token-swap fork, so pool creators set their own fees and there
+are four of them. Only two come off a swap — the trade fee and the **owner trade
+fee** — and the program subtracts their sum from the input before the curve runs.
+
+The owner fee is routinely enormous. Of 809,369 live pools the commonest fee
+shape carries `owner_trade 90/100`, and the pool the chain vector is taken from
+charges `99/100`: 270,270,000 of a 273,000,000 lamport swap is taken, leaving
+2,184,000 to reach the curve. Quoting on the trade fee alone returns 124x the
+real amount there.
+
+`quote/fluxbeam.QuoteExactIn` also refuses the constant-price and offset curves
+rather than pricing them on the constant-product formula. That costs almost
+nothing: 809,335 of the live pools are constant product.
 
 ## Contributing
 
