@@ -92,9 +92,10 @@ decision rests on one, measure it again.
 Commits: `venue: imperative summary`, then a body explaining *why*, with the
 numbers that justify it. Look at `git log` before writing one.
 
-Comments: short. Explain why something is not obvious, not what the code does. No
-dates unless the date identifies a program deployment or a frozen snapshot —
-provenance dates are noise to the next reader.
+Comments: **two lines, three at a push.** Never a second paragraph on a function.
+Explain why something is not obvious, not what the code does. If the reason needs
+more room than that, it belongs in the commit message, not above the function. No
+dates, no warning glyphs, no decorative punctuation.
 
 Gate before every commit:
 
