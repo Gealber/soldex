@@ -57,13 +57,16 @@ type RaydiumCLMMPool struct {
 	// Status (offset 389) is the pool's disable bitmap; bit4 disables swap and bit5
 	// disables limit orders. Read past the sequential decode, not by it.
 	Status uint8 `bin:"-"`
-	// FeeOn (offset 390) selects which token the swap fee is taken in: 0 FromInput,
+	// FeeOn (offset 390) now covers about 5% of pools and is growing fast, so it is
+	// no longer a rarity that can be skipped.
+	//
+	// It selects which token the swap fee is taken in: 0 FromInput,
 	// 1 Token0Only, 2 Token1Only. Anything but 0 moves the fee to the OUTPUT side
 	// for one of the two directions, which changes the amount out.
 	FeeOn uint8 `bin:"-"`
 	// DynamicFee (offset 1096) is the pool's volatility-driven fee state. Zero when
-	// the pool has no dynamic fee, which is the overwhelming majority — 547 of
-	// 178,353 pools carried a non-zero one on 2026-08-05.
+	// the pool has no dynamic fee. That is still the majority, but the feature is
+	// spreading fast.
 	DynamicFee RaydiumDynamicFee `bin:"-"`
 }
 
