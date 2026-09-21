@@ -1,6 +1,7 @@
 package fluxbeam
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 
@@ -111,5 +112,29 @@ func TestSwapExactInBasics(t *testing.T) {
 	// A swap too small to move the destination token is an error, not a zero.
 	if _, err := SwapExactIn(r0, r1, 1, extremeFees()); err != ErrZeroOutput {
 		t.Fatalf("err = %v, want ErrZeroOutput", err)
+	}
+}
+
+// A curve this package does not model must be refused, not priced on the
+// constant-product formula.
+func TestQuoteExactInRefusesUnmodelledCurves(t *testing.T) {
+	const r0, r1, in = uint64(1_000_000_000), uint64(1_000_000_000), uint64(10_000_000)
+
+	got, err := QuoteExactIn(models.FluxBeamCurveConstantProduct, r0, r1, in, normalFees())
+	if err != nil {
+		t.Fatalf("constant product should quote: %v", err)
+	}
+	direct, err := SwapExactIn(r0, r1, in, normalFees())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if got != direct {
+		t.Fatalf("curve-aware quote %d differs from the math %d", got, direct)
+	}
+
+	for _, curve := range []uint8{models.FluxBeamCurveConstantPrice, models.FluxBeamCurveOffset, 9} {
+		if _, err := QuoteExactIn(curve, r0, r1, in, normalFees()); !errors.Is(err, ErrUnsupportedCurve) {
+			t.Fatalf("curve %d: err = %v, want ErrUnsupportedCurve", curve, err)
+		}
 	}
 }

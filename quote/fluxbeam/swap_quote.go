@@ -5,6 +5,7 @@ package fluxbeam
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/Gealber/soldex/models"
@@ -15,7 +16,25 @@ import (
 var ErrZeroOutput = errors.New("fluxbeam: swap yields no output")
 
 // ErrUnsupportedCurve is returned for a curve this package does not model.
+//
+// Only constant product is modelled, which covers all but a few dozen live
+// pools. The constant-price and offset curves price differently enough that
+// running them through the constant-product formula would not be an
+// approximation, it would be a different number.
 var ErrUnsupportedCurve = errors.New("fluxbeam: unsupported curve type")
+
+// QuoteExactIn is the curve-aware entry point: it refuses a pool whose curve
+// this package does not model, then prices it.
+//
+// Prefer this over SwapExactIn unless you have already established the pool is
+// constant product — SwapExactIn assumes it and cannot tell.
+func QuoteExactIn(curveType uint8, reserveIn, reserveOut, amountIn uint64, fees models.FluxBeamFees) (uint64, error) {
+	if curveType != models.FluxBeamCurveConstantProduct {
+		return 0, fmt.Errorf("%w: %d", ErrUnsupportedCurve, curveType)
+	}
+
+	return SwapExactIn(reserveIn, reserveOut, amountIn, fees)
+}
 
 // SwapExactIn returns the destination amount for swapping amountIn into a
 // constant-product pool holding reserveIn / reserveOut, which are the two vault
