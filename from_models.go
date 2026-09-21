@@ -229,3 +229,35 @@ func FromRaydiumCPMM(
 	}
 	return RaydiumCPMM(reserve0, reserve1, cfg.TradeFeeRate+pool.EffectiveCreatorFeeRate(cfg)), nil
 }
+
+// FromPumpPool builds a Quoter for a Pump-AMM pool.
+//
+// baseVaultBalance and quoteVaultBalance are the pool's two vault token-account
+// balances. The quote side is netted through EffectiveQuoteReserve, because
+// newer pools price against quote reserve held OUTSIDE the vault: quoting on the
+// raw balance reads the pool as shallower than it is and over-predicts a buy.
+//
+// baseSupply is the base mint's supply, used for the market-cap fee tier. It is
+// the caller's to supply — soldex will not assume a supply for a mayhem coin,
+// since the fixed value the SDK implies has never been confirmed on chain.
+//
+// The fee is derived from the global config, the fee config and the pool
+// together: the schedule depends on graduate status and quote mint, and a pool
+// carrying its own creator fee replaces the schedule's creator component.
+func FromPumpPool(
+	pool *models.PumpPool, global *models.PumpGlobalConfig, feeCfg *models.PumpFeeConfig,
+	baseVaultBalance, quoteVaultBalance, baseSupply uint64,
+) (Quoter, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%w: nil Pump pool", ErrPoolNotQuotable)
+	}
+	if global == nil {
+		return nil, fmt.Errorf("%w: Pump needs the global config for its fee rates", ErrPoolNotQuotable)
+	}
+	quoteReserve := pool.EffectiveQuoteReserve(quoteVaultBalance)
+	if baseVaultBalance == 0 || quoteReserve == 0 {
+		return nil, fmt.Errorf("%w: Pump pool has an empty side", ErrPoolNotQuotable)
+	}
+	feeBps := models.PumpTotalFeeBps(global, feeCfg, pool, baseVaultBalance, quoteReserve, baseSupply)
+	return Pump(baseVaultBalance, quoteReserve, feeBps), nil
+}

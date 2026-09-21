@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	bin "github.com/gagliardetto/binary"
+	"github.com/gagliardetto/solana-go"
 
 	"github.com/Gealber/soldex/models"
 	"github.com/Gealber/soldex/quote/damm"
@@ -503,6 +504,99 @@ func TestFromRaydiumCPMMRefusals(t *testing.T) {
 		t.Fatal("an empty side must be refused, not quoted to zero")
 	}
 	if _, err := FromRaydiumCPMM(nil, cfg, 1, 1); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil pool must be refused")
+	}
+}
+
+func pumpPoolModel(virtualQuote int64, creatorFeeBps uint64) *models.PumpPool {
+	base := solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112")
+	pda, _, _ := solana.FindProgramAddress([][]byte{[]byte("pool-authority"), base.Bytes()},
+		solana.MustPublicKeyFromBase58("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"))
+	return &models.PumpPool{
+		BaseMint:             base,
+		QuoteMint:            solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112"),
+		Creator:              pda,
+		CoinCreator:          solana.MustPublicKeyFromBase58("11111111111111111111111111111112"),
+		VirtualQuoteReserves: virtualQuote,
+		CreatorFeeBps:        creatorFeeBps,
+	}
+}
+
+func pumpConfigs() (*models.PumpGlobalConfig, *models.PumpFeeConfig) {
+	return &models.PumpGlobalConfig{
+			LpBps: 20, ProtocolBps: 5, CoinCreatorBps: 5,
+			CreatorFeeConfigurable: true, MaxConfigurableCreatorFeeBps: 300,
+		}, &models.PumpFeeConfig{
+			Flat: models.PumpFees{LpBps: 25, ProtocolBps: 5},
+			Tiers: []models.PumpFeeTier{
+				{MarketCapThreshold: big.NewInt(0),
+					Fees: models.PumpFees{LpBps: 2, ProtocolBps: 93, CreatorBps: 30}},
+			},
+		}
+}
+
+// The virtual quote reserve is held outside the vault; pricing on the raw vault
+// balance reads the pool as shallower than it is and over-predicts a buy.
+func TestFromPumpPoolUsesTheEffectiveQuoteReserve(t *testing.T) {
+	g, fc := pumpConfigs()
+	const baseVault, quoteVault = uint64(1_000_000_000_000), uint64(300_000_000_000)
+
+	withVirtual, err := FromPumpPool(pumpPoolModel(17_585_000_000, 0), g, fc, baseVault, quoteVault, 1_000_000_000_000)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	none, err := FromPumpPool(pumpPoolModel(0, 0), g, fc, baseVault, quoteVault, 1_000_000_000_000)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	// Buying base with quote: deeper quote reserve returns LESS base per unit in.
+	a, err := withVirtual.QuoteExactIn(1_000_000_000, false)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	b, err := none.QuoteExactIn(1_000_000_000, false)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if a >= b {
+		t.Fatalf("virtual reserve ignored: %d vs %d", a, b)
+	}
+}
+
+// A per-pool creator fee replaces the schedule's creator component, so it must
+// reach the quote.
+func TestFromPumpPoolAppliesTheCreatorOverride(t *testing.T) {
+	g, fc := pumpConfigs()
+	const baseVault, quoteVault, supply = uint64(1_000_000_000_000), uint64(300_000_000_000), uint64(1_000_000_000_000)
+
+	plain, err := FromPumpPool(pumpPoolModel(0, 0), g, fc, baseVault, quoteVault, supply)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	override, err := FromPumpPool(pumpPoolModel(0, 300), g, fc, baseVault, quoteVault, supply)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	a, _ := plain.QuoteExactIn(1_000_000_000, false)
+	b, _ := override.QuoteExactIn(1_000_000_000, false)
+	if b >= a {
+		t.Fatalf("a 300 bps creator override should return less: %d vs %d", b, a)
+	}
+}
+
+func TestFromPumpPoolRefusals(t *testing.T) {
+	g, fc := pumpConfigs()
+	if _, err := FromPumpPool(pumpPoolModel(0, 0), nil, fc, 1, 1, 1); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a missing global config must be refused")
+	}
+	if _, err := FromPumpPool(pumpPoolModel(0, 0), g, fc, 0, 1_000, 1); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("an empty base side must be refused")
+	}
+	// A negative virtual reserve can net the quote side to nothing.
+	if _, err := FromPumpPool(pumpPoolModel(-1_000, 0), g, fc, 1_000, 500, 1); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a quote side netted to zero must be refused")
+	}
+	if _, err := FromPumpPool(nil, g, fc, 1, 1, 1); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatal("nil pool must be refused")
 	}
 }
