@@ -200,3 +200,32 @@ func FromRaydiumCLMM(
 		BlockTimestamp: blockTime,
 	}, ticks), nil
 }
+
+// FromRaydiumCPMM builds a Quoter for a Raydium CP-Swap constant-product pool.
+//
+// The two vault token-account balances are the caller's to fetch; soldex nets
+// them down by the protocol, fund and creator fees the pool tracks, which sit in
+// the vaults but are not swappable.
+//
+// cfg is the linked AmmConfig. The fee charged is its trade rate PLUS the pool's
+// creator fee where the pool enables one, so quoting on the trade rate alone
+// under-charges and over-states the output.
+func FromRaydiumCPMM(
+	pool *models.RaydiumCPMMPool, cfg *models.RaydiumCPMMConfig,
+	vault0Balance, vault1Balance uint64,
+) (Quoter, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%w: nil CP-Swap pool", ErrPoolNotQuotable)
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("%w: CP-Swap needs its AmmConfig for the trade fee rate", ErrPoolNotQuotable)
+	}
+	if pool.SwapDisabled() {
+		return nil, fmt.Errorf("%w: CP-Swap pool has swaps disabled", ErrPoolNotQuotable)
+	}
+	reserve0, reserve1 := pool.NetReserves(vault0Balance, vault1Balance)
+	if reserve0 == 0 || reserve1 == 0 {
+		return nil, fmt.Errorf("%w: CP-Swap pool has an empty side", ErrPoolNotQuotable)
+	}
+	return RaydiumCPMM(reserve0, reserve1, cfg.TradeFeeRate+pool.EffectiveCreatorFeeRate(cfg)), nil
+}

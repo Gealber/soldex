@@ -53,6 +53,12 @@ type RaydiumCPMMPool struct {
 	Mint0Decimals uint8
 	Mint1Decimals uint8
 
+	// Status is the pool's disable bitmap; bit2 set means swaps are disabled.
+	// Its offset sits between auth_bump and the two mint decimals, which do decode
+	// correctly, so the layout is anchored — but every live pool reads zero, so
+	// the gate is latent rather than something exercised today.
+	Status uint8
+
 	// Fee accruals held in the vaults but NOT part of the swappable reserve.
 	ProtocolFeesToken0 uint64
 	ProtocolFeesToken1 uint64
@@ -99,6 +105,7 @@ func DecodeRaydiumCPMMPool(data []byte, address solana.PublicKey) (*RaydiumCPMMP
 		Token1Mint:         solana.PublicKeyFromBytes(b[192:224]),
 		Token0Program:      solana.PublicKeyFromBytes(b[224:256]),
 		Token1Program:      solana.PublicKeyFromBytes(b[256:288]),
+		Status:             b[321],
 		Mint0Decimals:      b[323],
 		Mint1Decimals:      b[324],
 		ProtocolFeesToken0: binary.LittleEndian.Uint64(b[333:341]),
@@ -136,6 +143,11 @@ func (p *RaydiumCPMMPool) EffectiveCreatorFeeRate(cfg *RaydiumCPMMConfig) uint64
 		return 0
 	}
 	return cfg.CreatorFeeRate
+}
+
+// SwapDisabled reports whether bit2 of Status disables swapping on this pool.
+func (p *RaydiumCPMMPool) SwapDisabled() bool {
+	return p != nil && p.Status&(1<<2) != 0
 }
 
 func saturatingSub(a, b uint64) uint64 {

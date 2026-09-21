@@ -423,3 +423,86 @@ func TestFromRaydiumCLMMRefusals(t *testing.T) {
 		t.Fatal("nil pool must be refused")
 	}
 }
+
+func cpmmModel(enableCreatorFee bool, creatorFees0, creatorFees1 uint64) *models.RaydiumCPMMPool {
+	return &models.RaydiumCPMMPool{
+		ProtocolFeesToken0: 1_000,
+		ProtocolFeesToken1: 2_000,
+		FundFeesToken0:     3_000,
+		FundFeesToken1:     4_000,
+		EnableCreatorFee:   enableCreatorFee,
+		CreatorFeesToken0:  creatorFees0,
+		CreatorFeesToken1:  creatorFees1,
+	}
+}
+
+// Creator fees sit in the vault but are not swappable, and the creator rate is
+// charged on top of the trade rate. Ignoring either over-states the output.
+func TestFromRaydiumCPMMChargesTheCreatorFee(t *testing.T) {
+	cfg := &models.RaydiumCPMMConfig{TradeFeeRate: 2_500, CreatorFeeRate: 7_500}
+	const v0, v1, in = uint64(1_000_000_000), uint64(1_000_000_000), uint64(10_000_000)
+
+	// Identical accruals either side: only the enable flag differs, so the rate is
+	// the one variable. Varying the accruals too shifts the reserve ratio and can
+	// swamp the fee entirely.
+	with, err := FromRaydiumCPMM(cpmmModel(true, 0, 0), cfg, v0, v1)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	without, err := FromRaydiumCPMM(cpmmModel(false, 0, 0), cfg, v0, v1)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	a, err := with.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	b, err := without.QuoteExactIn(in, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if a >= b {
+		t.Fatalf("creator-fee pool quoted %d, plain pool %d — the creator fee was not applied", a, b)
+	}
+}
+
+// The accrued creator fees must come out of the reserves even when the rate is
+// what changes the quote, so this isolates the reserve half.
+func TestFromRaydiumCPMMNetsOutAccruedFees(t *testing.T) {
+	cfg := &models.RaydiumCPMMConfig{TradeFeeRate: 2_500}
+	const v0, v1, in = uint64(1_000_000_000), uint64(1_000_000_000), uint64(10_000_000)
+
+	// Same rates either way (creator fee disabled), only the accruals differ.
+	lean, err := FromRaydiumCPMM(cpmmModel(false, 400_000_000, 0), cfg, v0, v1)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	full, err := FromRaydiumCPMM(cpmmModel(false, 0, 0), cfg, v0, v1)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	a, _ := lean.QuoteExactIn(in, true)
+	b, _ := full.QuoteExactIn(in, true)
+	if a == b {
+		t.Fatalf("accrued creator fees did not change the reserves (%d both)", a)
+	}
+}
+
+func TestFromRaydiumCPMMRefusals(t *testing.T) {
+	cfg := &models.RaydiumCPMMConfig{TradeFeeRate: 2_500}
+	if _, err := FromRaydiumCPMM(cpmmModel(false, 0, 0), nil, 1_000, 1_000); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a missing AmmConfig must be refused")
+	}
+	disabled := cpmmModel(false, 0, 0)
+	disabled.Status = 1 << 2
+	if _, err := FromRaydiumCPMM(disabled, cfg, 1_000_000, 1_000_000); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a swap-disabled pool must be refused")
+	}
+	// Vaults holding only accrued fees leave nothing swappable.
+	if _, err := FromRaydiumCPMM(cpmmModel(false, 0, 0), cfg, 4_000, 1_000_000); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("an empty side must be refused, not quoted to zero")
+	}
+	if _, err := FromRaydiumCPMM(nil, cfg, 1, 1); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil pool must be refused")
+	}
+}
