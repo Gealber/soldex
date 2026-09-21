@@ -14,10 +14,15 @@ const FeeRateDenominator = 1_000_000
 
 // SwapBaseInput returns the output-token amount for swapping amountIn of the input
 // token into a CP-Swap pool holding reserveIn / reserveOut (net reserves). The
-// trade fee is taken off the input first — tradeFee = ceil(amountIn*feeRate/1e6) —
-// then constant product gives out = reserveOut*netIn/(reserveIn+netIn), floored.
+// fee is taken off the input first — fee = ceil(amountIn*feeRate/1e6) — then
+// constant product gives out = reserveOut*netIn/(reserveIn+netIn), floored.
 // Protocol and fund fees are carved out of the trade fee, so they do not reduce
 // the output further and are not needed here.
+//
+// feeRate is the TOTAL input-side rate. For a pool that enables the creator fee
+// (added in Raydium #55) that is trade_fee_rate + creator_fee_rate — see
+// models.RaydiumCPMMPool.EffectiveCreatorFeeRate. Quoting such a pool on the
+// trade fee alone under-charges and so over-states the output.
 func SwapBaseInput(reserveIn, reserveOut, amountIn, feeRate uint64) uint64 {
 	// tradeFee = ceil(amountIn * feeRate / FeeRateDenominator).
 	fee := new(big.Int).Mul(new(big.Int).SetUint64(amountIn), new(big.Int).SetUint64(feeRate))

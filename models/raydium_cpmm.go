@@ -58,14 +58,29 @@ type RaydiumCPMMPool struct {
 	ProtocolFeesToken1 uint64
 	FundFeesToken0     uint64
 	FundFeesToken1     uint64
+
+	// CreatorFeeOn (byte at absolute offset 389) selects which side the creator fee
+	// comes from, an enum over {0, 1, 2}.
+	//
+	// ⚠ THE MAPPING OF THOSE VALUES IS NOT ESTABLISHED — no IDL or SDK carries it,
+	// so EffectiveCreatorFeeRate charges the fee on the INPUT alongside the trade
+	// fee, and callers needing the output-side variant must resolve the enum first.
+	CreatorFeeOn uint8
+	// EnableCreatorFee (absolute offset 390) gates the creator fee.
+	EnableCreatorFee bool
+	// CreatorFeesToken0 and CreatorFeesToken1 (u64 at absolute 397 and 405) are
+	// creator fees sitting in the vaults but NOT swappable — the same treatment
+	// the protocol and fund fees already get.
+	CreatorFeesToken0 uint64
+	CreatorFeesToken1 uint64
 }
 
 // DecodeRaydiumCPMMPool decodes a Raydium CP-Swap PoolState from raw account bytes
 // (with discriminator). The caller must have already confirmed the account is
 // owned by RaydiumCPMMProgramID, since the discriminator collides with CLMM.
 func DecodeRaydiumCPMMPool(data []byte, address solana.PublicKey) (*RaydiumCPMMPool, error) {
-	// Through fund_fees_token_1 (ends at 8+365 = 373).
-	const need = 8 + 365
+	// Through creator_fees_token_1 (absolute 405..413).
+	const need = 413
 	if len(data) < need {
 		return nil, ErrInsufficientData
 	}
@@ -90,16 +105,37 @@ func DecodeRaydiumCPMMPool(data []byte, address solana.PublicKey) (*RaydiumCPMMP
 		ProtocolFeesToken1: binary.LittleEndian.Uint64(b[341:349]),
 		FundFeesToken0:     binary.LittleEndian.Uint64(b[349:357]),
 		FundFeesToken1:     binary.LittleEndian.Uint64(b[357:365]),
+		// These four are read by ABSOLUTE offset rather than continuing the
+		// sequential b-relative walk, because the fields between fund_fees_token_1
+		// and them are not modelled here.
+		CreatorFeeOn:      data[389],
+		EnableCreatorFee:  data[390] != 0,
+		CreatorFeesToken0: binary.LittleEndian.Uint64(data[397:405]),
+		CreatorFeesToken1: binary.LittleEndian.Uint64(data[405:413]),
 	}, nil
 }
 
 // NetReserves returns the swappable constant-product reserves given the pool's two
-// raw vault token-account balances (read separately). It subtracts the protocol
-// and fund fees the pool tracks, matching the on-chain vault_amount_without_fee.
-// Subtraction saturates at zero rather than underflowing.
+// raw vault token-account balances (read separately). It subtracts the protocol,
+// fund AND creator fees the pool tracks, matching the on-chain
+// vault_amount_without_fee. Subtraction saturates at zero rather than
+// underflowing.
+//
+// Creator fees sit in the vault exactly like the other two accruals, so counting
+// them as reserve over-states the pool's depth and the output with it.
 func (p *RaydiumCPMMPool) NetReserves(vault0Balance, vault1Balance uint64) (reserve0, reserve1 uint64) {
-	return saturatingSub(vault0Balance, p.ProtocolFeesToken0+p.FundFeesToken0),
-		saturatingSub(vault1Balance, p.ProtocolFeesToken1+p.FundFeesToken1)
+	return saturatingSub(vault0Balance, p.ProtocolFeesToken0+p.FundFeesToken0+p.CreatorFeesToken0),
+		saturatingSub(vault1Balance, p.ProtocolFeesToken1+p.FundFeesToken1+p.CreatorFeesToken1)
+}
+
+// EffectiveCreatorFeeRate is the creator fee rate this pool actually charges,
+// out of raycpmm.FeeRateDenominator: the config's rate when the pool enables the
+// fee, zero otherwise. Add it to the trade fee rate when quoting.
+func (p *RaydiumCPMMPool) EffectiveCreatorFeeRate(cfg *RaydiumCPMMConfig) uint64 {
+	if p == nil || cfg == nil || !p.EnableCreatorFee {
+		return 0
+	}
+	return cfg.CreatorFeeRate
 }
 
 func saturatingSub(a, b uint64) uint64 {
@@ -121,14 +157,17 @@ type RaydiumCPMMConfig struct {
 	// TradeFeeRate is the swap fee numerator, denominated in hundredths of a bip
 	// (out of raycpmm.FeeRateDenominator = 1e6).
 	TradeFeeRate uint64
+	// CreatorFeeRate (u64 at absolute offset 108) is the creator fee numerator in
+	// the same units, charged only by pools whose EnableCreatorFee is set.
+	CreatorFeeRate uint64
 }
 
 // DecodeRaydiumCPMMConfig decodes a Raydium CP-Swap AmmConfig from raw account
 // bytes (with discriminator). The caller must have confirmed RaydiumCPMMProgramID
 // ownership, since the discriminator collides with CLMM's AmmConfig.
 func DecodeRaydiumCPMMConfig(data []byte, address solana.PublicKey) (*RaydiumCPMMConfig, error) {
-	// Through trade_fee_rate (ends at 8+12 = 20).
-	const need = 8 + 12
+	// Through creator_fee_rate (absolute 108..116).
+	const need = 116
 	if len(data) < need {
 		return nil, ErrInsufficientData
 	}
@@ -138,7 +177,8 @@ func DecodeRaydiumCPMMConfig(data []byte, address solana.PublicKey) (*RaydiumCPM
 		return nil, fmt.Errorf("%w: got %x, expected %x", ErrInvalidDiscriminator, disc, RaydiumCPMMConfigDiscriminator)
 	}
 	return &RaydiumCPMMConfig{
-		Address:      address,
-		TradeFeeRate: binary.LittleEndian.Uint64(data[8+4 : 8+12]),
+		Address:        address,
+		TradeFeeRate:   binary.LittleEndian.Uint64(data[8+4 : 8+12]),
+		CreatorFeeRate: binary.LittleEndian.Uint64(data[108:116]),
 	}, nil
 }

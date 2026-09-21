@@ -113,8 +113,9 @@ func TestDecodeRaydiumCPMMConfigLayout(t *testing.T) {
 }
 
 func TestDecodeRaydiumCPMMWrongDiscriminator(t *testing.T) {
-	data := make([]byte, 8+365)
-	// Left as zero discriminator — must be rejected, not silently decoded.
+	data := make([]byte, 8+637)
+	// Long enough to decode, so this really tests the discriminator check rather
+	// than tripping the length guard first.
 	if _, err := DecodeRaydiumCPMMPool(data, solana.PublicKey{}); err == nil {
 		t.Fatal("expected discriminator error on zeroed data")
 	}

@@ -34,3 +34,18 @@ func TestSwapBaseInputFeeIsCeil(t *testing.T) {
 		t.Fatalf("ceil fee should zero out a 1-unit input, got %d", got)
 	}
 }
+
+// A pool that charges a creator fee on top of the trade fee must return less.
+// Quoting it on the trade fee alone over-states the output.
+func TestSwapBaseInputCreatorFeeReducesOutput(t *testing.T) {
+	const r0, r1, in = uint64(1_000_000_000), uint64(1_000_000_000), uint64(10_000_000)
+	tradeOnly := SwapBaseInput(r0, r1, in, 2_500)
+	withCreator := SwapBaseInput(r0, r1, in, 2_500+7_500)
+	if withCreator >= tradeOnly {
+		t.Fatalf("creator fee did not reduce output: %d >= %d", withCreator, tradeOnly)
+	}
+	// The gap should be ~0.75% of the input, the creator rate.
+	if gap := tradeOnly - withCreator; gap < in*7/1000 || gap > in*8/1000 {
+		t.Fatalf("output gap %d not ~0.75%% of %d", gap, in)
+	}
+}
