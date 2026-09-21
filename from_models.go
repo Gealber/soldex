@@ -72,25 +72,24 @@ func FromDAMMPool(pool *models.DAMMPool, currentPoint uint64) (Quoter, error) {
 	}), nil
 }
 
-// FromDLMMPool builds a Quoter for a Meteora DLMM pool.
+// DLMMSwapPool maps a decoded pool onto the quote package's input, refusing a
+// pair that is not Enabled.
 //
-// currentTimestamp is the swap's block time; the variable fee decays against it,
-// so a stale one over-states the fee. bins is the cached bin-array window the
-// quote walks — it stops at the edge of what the provider knows, so a window too
-// narrow silently truncates a large swap.
-//
-// A pair whose Status is not Enabled is refused: it cannot trade, and a number
-// for a swap that would revert is worse than no number.
-func FromDLMMPool(pool *models.DLMMPool, currentTimestamp int64, bins dlmm.BinProvider) (Quoter, error) {
+// FromDLMMPool is the usual entry point. This exists for callers that need
+// dlmm.QuoteExactInDetailed — the Quoter interface returns only an amount, so it
+// cannot express a partial fill, and a caller that must detect one has to drive
+// the quote package directly. They should still not hand-map the twelve fee and
+// volatility parameters to do it.
+func DLMMSwapPool(pool *models.DLMMPool) (dlmm.SwapPool, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("%w: nil DLMM pool", ErrPoolNotQuotable)
+		return dlmm.SwapPool{}, fmt.Errorf("%w: nil DLMM pool", ErrPoolNotQuotable)
 	}
 	if pool.Status != dlmmPairStatusEnabled {
-		return nil, fmt.Errorf("%w: DLMM pair status %d", ErrPoolNotQuotable, pool.Status)
+		return dlmm.SwapPool{}, fmt.Errorf("%w: DLMM pair status %d", ErrPoolNotQuotable, pool.Status)
 	}
 	sp := pool.Parameters
 	vp := pool.VParameters
-	return DLMM(dlmm.SwapPool{
+	return dlmm.SwapPool{
 		ActiveID: pool.ActiveID,
 		BinStep:  pool.BinStep,
 
@@ -107,7 +106,24 @@ func FromDLMMPool(pool *models.DLMMPool, currentTimestamp int64, bins dlmm.BinPr
 		VolatilityReference:   vp.VolatilityReference,
 		IndexReference:        vp.IndexReference,
 		LastUpdateTimestamp:   vp.LastUpdateTimestamp,
-	}, currentTimestamp, bins), nil
+	}, nil
+}
+
+// FromDLMMPool builds a Quoter for a Meteora DLMM pool.
+//
+// currentTimestamp is the swap's block time; the variable fee decays against it,
+// so a stale one over-states the fee. bins is the cached bin-array window the
+// quote walks — it stops at the edge of what the provider knows, so a window too
+// narrow silently truncates a large swap.
+//
+// A pair whose Status is not Enabled is refused: it cannot trade, and a number
+// for a swap that would revert is worse than no number.
+func FromDLMMPool(pool *models.DLMMPool, currentTimestamp int64, bins dlmm.BinProvider) (Quoter, error) {
+	sp, err := DLMMSwapPool(pool)
+	if err != nil {
+		return nil, err
+	}
+	return DLMM(sp, currentTimestamp, bins), nil
 }
 
 // dlmmPairStatusEnabled is lb_clmm's PairStatus::Enabled.

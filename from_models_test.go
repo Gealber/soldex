@@ -657,3 +657,36 @@ func TestFromBondingCurveRefusals(t *testing.T) {
 		t.Fatal("nil curve must be refused")
 	}
 }
+
+// DLMMSwapPool and FromDLMMPool must map identically — they are one mapping, and
+// a caller needing the detailed quote must not get a different pool than a
+// caller using the Quoter.
+func TestDLMMSwapPoolMatchesFromDLMMPool(t *testing.T) {
+	pool := dlmmModel(0)
+	const ts = int64(1_700_000_300)
+
+	sp, err := DLMMSwapPool(pool)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	viaMapping, err := DLMM(sp, ts, dlmmBins()).QuoteExactIn(20_000_000, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	q, err := FromDLMMPool(pool, ts, dlmmBins())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	viaQuoter, err := q.QuoteExactIn(20_000_000, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if viaMapping != viaQuoter {
+		t.Fatalf("DLMMSwapPool quoted %d, FromDLMMPool %d", viaMapping, viaQuoter)
+	}
+	// And it refuses the same pair.
+	if _, err := DLMMSwapPool(dlmmModel(1)); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("DLMMSwapPool must refuse a non-Enabled pair")
+	}
+}
