@@ -3,6 +3,7 @@ package soldex
 import (
 	"encoding/binary"
 	"errors"
+	"math/big"
 	"testing"
 
 	bin "github.com/gagliardetto/binary"
@@ -10,6 +11,7 @@ import (
 	"github.com/Gealber/soldex/models"
 	"github.com/Gealber/soldex/quote/damm"
 	"github.com/Gealber/soldex/quote/dlmm"
+	"github.com/Gealber/soldex/quote/orca"
 )
 
 // dammPool builds a decoded pool with a concentrated range wide enough to quote
@@ -250,6 +252,89 @@ func TestFromDLMMPoolRefusesDisabledPair(t *testing.T) {
 		t.Fatal("a non-enabled pair must be refused")
 	}
 	if _, err := FromDLMMPool(nil, 0, dlmmBins()); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil pool must be refused")
+	}
+}
+
+func whirlpoolModel() *models.Whirlpool {
+	return &models.Whirlpool{
+		SqrtPrice:        bin.Uint128{Hi: 1}, // 2^64, price 1
+		Liquidity:        bin.Uint128{Lo: 2_000_000},
+		TickCurrentIndex: 0,
+		TickSpacing:      64,
+		FeeRate:          3_000, // 0.3%
+	}
+}
+
+// orcaTicks reports the far edge of the tick range with no liquidity change, so
+// the swap runs on the active range alone.
+func orcaTicks() orca.TickProvider {
+	return func(fromTick int32, aToB bool) (orca.TickBoundary, bool) {
+		if aToB {
+			return orca.TickBoundary{TickIndex: -443_636, LiquidityNet: big.NewInt(0)}, true
+		}
+		return orca.TickBoundary{TickIndex: 443_636, LiquidityNet: big.NewInt(0)}, true
+	}
+}
+
+func adaptiveOracle(enableAt uint64) *models.WhirlpoolOracle {
+	return &models.WhirlpoolOracle{
+		TradeEnableTimestamp:         enableAt,
+		FilterPeriod:                 30,
+		DecayPeriod:                  600,
+		ReductionFactor:              500,
+		AdaptiveFeeControlFactor:     4_000,
+		MaxVolatilityAccumulator:     350_000,
+		TickGroupSize:                64,
+		MajorSwapThresholdTicks:      64,
+		VolatilityAccumulator:        200_000,
+		TickGroupIndexReference:      0,
+		LastReferenceUpdateTimestamp: 1_700_000_000,
+	}
+}
+
+// An adaptive-fee pool quoted without its oracle loses the volatility surcharge
+// entirely, so the constructor must carry it.
+func TestFromWhirlpoolAppliesTheOracle(t *testing.T) {
+	const now = uint64(1_700_000_100)
+	pool := whirlpoolModel()
+
+	withOracle, err := FromWhirlpool(pool, adaptiveOracle(0), orcaTicks(), now)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	staticOnly, err := FromWhirlpool(pool, nil, orcaTicks(), now)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	a, err := withOracle.QuoteExactIn(100_000, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	b, err := staticOnly.QuoteExactIn(100_000, true)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if a == 0 || b == 0 {
+		t.Fatalf("fixture quoted zero (%d, %d)", a, b)
+	}
+	if a >= b {
+		t.Fatalf("adaptive fee quoted %d, static-only %d — the surcharge was not applied", a, b)
+	}
+}
+
+// A pool that has not opened yet must be refused, not quoted.
+func TestFromWhirlpoolRefusesUntradablePool(t *testing.T) {
+	const now = uint64(1_700_000_100)
+	if _, err := FromWhirlpool(whirlpoolModel(), adaptiveOracle(now+1), orcaTicks(), now); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a pool gated until a future timestamp must be refused")
+	}
+	// At the enable time it becomes quotable.
+	if _, err := FromWhirlpool(whirlpoolModel(), adaptiveOracle(now), orcaTicks(), now); err != nil {
+		t.Fatalf("pool should be quotable at its enable time: %v", err)
+	}
+	if _, err := FromWhirlpool(nil, nil, orcaTicks(), now); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatal("nil pool must be refused")
 	}
 }

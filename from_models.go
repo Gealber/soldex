@@ -7,6 +7,7 @@ import (
 	"github.com/Gealber/soldex/models"
 	"github.com/Gealber/soldex/quote/damm"
 	"github.com/Gealber/soldex/quote/dlmm"
+	"github.com/Gealber/soldex/quote/orca"
 )
 
 // The From* constructors build a Quoter straight from a decoded model, so a
@@ -110,3 +111,54 @@ func FromDLMMPool(pool *models.DLMMPool, currentTimestamp int64, bins dlmm.BinPr
 
 // dlmmPairStatusEnabled is lb_clmm's PairStatus::Enabled.
 const dlmmPairStatusEnabled uint8 = 0
+
+// FromWhirlpool builds a Quoter for an Orca Whirlpool.
+//
+// oracle is the pool's Oracle account, or nil for a plain static-fee pool — only
+// adaptive-fee pools have one. Passing nil for a pool that HAS an oracle quotes
+// it without the volatility surcharge, so fetch it before deciding.
+//
+// now is the current unix time, used both to decay the adaptive-fee reference
+// and to check the pool has opened. A pool whose oracle gates trading until a
+// future timestamp is refused.
+func FromWhirlpool(
+	pool *models.Whirlpool, oracle *models.WhirlpoolOracle,
+	ticks orca.TickProvider, now uint64,
+) (Quoter, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%w: nil whirlpool", ErrPoolNotQuotable)
+	}
+	if !oracle.TradableAt(now) {
+		return nil, fmt.Errorf("%w: whirlpool opens for trading at %d", ErrPoolNotQuotable, oracle.TradeEnableTimestamp)
+	}
+
+	sp := orca.SwapPool{
+		SqrtPrice:        pool.SqrtPrice.BigInt(),
+		Liquidity:        pool.Liquidity.BigInt(),
+		TickCurrentIndex: pool.TickCurrentIndex,
+		TickSpacing:      pool.TickSpacing,
+		FeeRate:          pool.FeeRate,
+		Timestamp:        now,
+	}
+	if oracle != nil {
+		sp.AdaptiveFee = &orca.AdaptiveFeeInfo{
+			Constants: orca.AdaptiveFeeConstants{
+				FilterPeriod:             oracle.FilterPeriod,
+				DecayPeriod:              oracle.DecayPeriod,
+				ReductionFactor:          oracle.ReductionFactor,
+				AdaptiveFeeControlFactor: oracle.AdaptiveFeeControlFactor,
+				MaxVolatilityAccumulator: oracle.MaxVolatilityAccumulator,
+				TickGroupSize:            oracle.TickGroupSize,
+				MajorSwapThresholdTicks:  oracle.MajorSwapThresholdTicks,
+			},
+			Variables: orca.AdaptiveFeeVariables{
+				LastReferenceUpdateTimestamp: oracle.LastReferenceUpdateTimestamp,
+				LastMajorSwapTimestamp:       oracle.LastMajorSwapTimestamp,
+				VolatilityReference:          oracle.VolatilityReference,
+				TickGroupIndexReference:      oracle.TickGroupIndexReference,
+				VolatilityAccumulator:        oracle.VolatilityAccumulator,
+			},
+		}
+	}
+	return Orca(sp, ticks), nil
+}
