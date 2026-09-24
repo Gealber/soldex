@@ -62,8 +62,24 @@ type TickProvider func(fromTick int32, aToB bool) (TickBoundary, bool)
 // the input is consumed or known liquidity runs out. aToB true sells token A for
 // token B (price decreasing). Returns the net output amount.
 func QuoteExactIn(pool SwapPool, aToB bool, amountIn uint64, ticks TickProvider) (uint64, error) {
+	res, err := QuoteExactInDetailed(pool, aToB, amountIn, ticks)
+	if err != nil {
+		return 0, err
+	}
+	return res.AmountOut, nil
+}
+
+// QuoteResult is the output of QuoteExactInDetailed. AmountInConsumed is less than the
+// requested amount when the ticks ran out first, which the on-chain swap cannot fill.
+type QuoteResult struct {
+	AmountOut        uint64
+	AmountInConsumed uint64
+}
+
+// QuoteExactInDetailed is QuoteExactIn reporting how much of the input was consumed.
+func QuoteExactInDetailed(pool SwapPool, aToB bool, amountIn uint64, ticks TickProvider) (QuoteResult, error) {
 	if pool.SqrtPrice == nil || pool.Liquidity == nil {
-		return 0, ErrInvalidPool
+		return QuoteResult{}, ErrInvalidPool
 	}
 
 	limit := orcamath.MaxSqrtPrice
@@ -75,7 +91,7 @@ func QuoteExactIn(pool SwapPool, aToB bool, amountIn uint64, ticks TickProvider)
 	if !ok {
 		// Out-of-order timestamp vs the oracle reference; the on-chain swap would
 		// revert, so refuse to quote rather than under-charge.
-		return 0, ErrInvalidPool
+		return QuoteResult{}, ErrInvalidPool
 	}
 
 	amountRemaining := amountIn
@@ -102,14 +118,14 @@ func QuoteExactIn(pool SwapPool, aToB bool, amountIn uint64, ticks TickProvider)
 
 			step, err := computeSwapStep(amountRemaining, totalFeeRate, liquidity, sqrtPrice, boundedTarget, aToB)
 			if err != nil {
-				return 0, err
+				return QuoteResult{}, err
 			}
 			if step.amountIn > amountRemaining || step.feeAmount > amountRemaining-step.amountIn {
-				return 0, ErrAmountOverflow
+				return QuoteResult{}, ErrAmountOverflow
 			}
 			amountRemaining -= step.amountIn + step.feeAmount
 			if amountOut > math.MaxUint64-step.amountOut {
-				return 0, ErrAmountOverflow
+				return QuoteResult{}, ErrAmountOverflow
 			}
 			amountOut += step.amountOut
 
@@ -118,7 +134,7 @@ func QuoteExactIn(pool SwapPool, aToB bool, amountIn uint64, ticks TickProvider)
 			if step.nextPrice.Cmp(nextTickSqrtPrice) == 0 {
 				if boundary.Initialized {
 					if err := crossLiquidity(liquidity, boundary.LiquidityNet, aToB); err != nil {
-						return 0, err
+						return QuoteResult{}, err
 					}
 				}
 				// The a_to_b search is inclusive, so shift left by one to advance.
@@ -144,7 +160,7 @@ func QuoteExactIn(pool SwapPool, aToB bool, amountIn uint64, ticks TickProvider)
 		}
 	}
 
-	return amountOut, nil
+	return QuoteResult{AmountOut: amountOut, AmountInConsumed: amountIn - amountRemaining}, nil
 }
 
 // crossLiquidity applies signed_liquidity_net = aToB ? -net : +net. Mirrors
