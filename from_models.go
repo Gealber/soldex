@@ -113,11 +113,21 @@ func FromWhirlpool(
 	pool *models.Whirlpool, oracle *models.WhirlpoolOracle,
 	ticks orca.TickProvider, now uint64,
 ) (Quoter, error) {
+	sp, err := WhirlpoolSwapPool(pool, oracle, now)
+	if err != nil {
+		return nil, err
+	}
+	return Orca(sp, ticks), nil
+}
+
+// WhirlpoolSwapPool is the orca.SwapPool FromWhirlpool quotes, for callers that need
+// orca.QuoteExactInDetailed. The same refusals and oracle rules apply.
+func WhirlpoolSwapPool(pool *models.Whirlpool, oracle *models.WhirlpoolOracle, now uint64) (orca.SwapPool, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("%w: nil whirlpool", ErrPoolNotQuotable)
+		return orca.SwapPool{}, fmt.Errorf("%w: nil whirlpool", ErrPoolNotQuotable)
 	}
 	if !oracle.TradableAt(now) {
-		return nil, fmt.Errorf("%w: whirlpool opens for trading at %d", ErrPoolNotQuotable, oracle.TradeEnableTimestamp)
+		return orca.SwapPool{}, fmt.Errorf("%w: whirlpool opens for trading at %d", ErrPoolNotQuotable, oracle.TradeEnableTimestamp)
 	}
 
 	sp := orca.SwapPool{
@@ -148,7 +158,7 @@ func FromWhirlpool(
 			},
 		}
 	}
-	return Orca(sp, ticks), nil
+	return sp, nil
 }
 
 // FromRaydiumCLMM builds a Quoter for a Raydium CLMM pool. cfg is the linked
