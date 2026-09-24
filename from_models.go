@@ -8,6 +8,7 @@ import (
 	"github.com/Gealber/soldex/quote/damm"
 	"github.com/Gealber/soldex/quote/dlmm"
 	"github.com/Gealber/soldex/quote/orca"
+	"github.com/Gealber/soldex/quote/raycpmm"
 	soldexray "github.com/Gealber/soldex/quote/raydium"
 )
 
@@ -180,8 +181,7 @@ func FromRaydiumCLMM(
 }
 
 // FromRaydiumCPMM builds a Quoter for a Raydium CP-Swap pool. The vault balances
-// are netted down by the fees the pool tracks, which sit in the vaults but are
-// not swappable, and the rate charged is cfg's trade rate plus the creator fee.
+// are netted down by the fees the pool tracks, which sit in the vaults but are not swappable.
 func FromRaydiumCPMM(
 	pool *models.RaydiumCPMMPool, cfg *models.RaydiumCPMMConfig,
 	vault0Balance, vault1Balance uint64,
@@ -195,11 +195,14 @@ func FromRaydiumCPMM(
 	if pool.SwapDisabled() {
 		return nil, fmt.Errorf("%w: CP-Swap pool has swaps disabled", ErrPoolNotQuotable)
 	}
+	if _, err := raycpmm.CreatorFeeOnInput(pool.CreatorFeeOn, true); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrPoolNotQuotable, err)
+	}
 	reserve0, reserve1 := pool.NetReserves(vault0Balance, vault1Balance)
 	if reserve0 == 0 || reserve1 == 0 {
 		return nil, fmt.Errorf("%w: CP-Swap pool has an empty side", ErrPoolNotQuotable)
 	}
-	return RaydiumCPMM(reserve0, reserve1, cfg.TradeFeeRate+pool.EffectiveCreatorFeeRate(cfg)), nil
+	return RaydiumCPMM(reserve0, reserve1, cfg.TradeFeeRate, pool.EffectiveCreatorFeeRate(cfg), pool.CreatorFeeOn), nil
 }
 
 // FromPumpPool builds a Quoter for a Pump-AMM pool. The quote side is netted

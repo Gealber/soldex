@@ -69,14 +69,17 @@ func DAMMConcentrated(pool damm.ConcentratedPool) Quoter {
 }
 
 // RaydiumCPMM binds a Raydium CP-Swap pool by its NET reserves (see
-// models.RaydiumCPMMPool.NetReserves) and the total input-side fee rate out of
-// 1e6, which is the AmmConfig rate PLUS EffectiveCreatorFeeRate.
-func RaydiumCPMM(reserve0, reserve1, feeRate uint64) Quoter {
+// models.RaydiumCPMMPool.NetReserves); creatorFeeRate is EffectiveCreatorFeeRate.
+func RaydiumCPMM(reserve0, reserve1, tradeFeeRate, creatorFeeRate uint64, creatorFeeOn uint8) Quoter {
 	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
-		if aToB {
-			return raycpmm.SwapBaseInput(reserve0, reserve1, amountIn, feeRate), nil
+		onInput, err := raycpmm.CreatorFeeOnInput(creatorFeeOn, aToB)
+		if err != nil {
+			return 0, err
 		}
-		return raycpmm.SwapBaseInput(reserve1, reserve0, amountIn, feeRate), nil
+		if aToB {
+			return raycpmm.SwapBaseInput(reserve0, reserve1, amountIn, tradeFeeRate, creatorFeeRate, onInput), nil
+		}
+		return raycpmm.SwapBaseInput(reserve1, reserve0, amountIn, tradeFeeRate, creatorFeeRate, onInput), nil
 	})
 }
 

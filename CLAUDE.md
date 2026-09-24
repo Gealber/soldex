@@ -172,7 +172,10 @@ consumer, or you are testing against code nobody else has.
   with `CurrentBaseFeeNumerator`.
 - Pump-AMM quote reserves are not the vault balance. Price through
   `EffectiveQuoteReserve`.
-- Raydium CP-Swap and Pump both take a TOTAL fee rate that includes a creator
-  component. Passing the trade fee alone under-charges.
+- Pump takes a TOTAL fee rate that includes a creator component. Passing the
+  trade fee alone under-charges.
+- Raydium CP-Swap charges its creator fee on the input OR the output, by
+  `creator_fee_on` and direction. Most creator-fee pools take it off the output
+  one way, so a single input-side rate is wrong there.
 - A `models` field that decodes as zero on a short account is a real cohort, not
   a bug. Account layouts here grow by appending, and every old cohort stays live.

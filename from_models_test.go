@@ -14,6 +14,7 @@ import (
 	"github.com/Gealber/soldex/quote/dlmm"
 	"github.com/Gealber/soldex/quote/fluxbeam"
 	"github.com/Gealber/soldex/quote/orca"
+	"github.com/Gealber/soldex/quote/raycpmm"
 	soldexray "github.com/Gealber/soldex/quote/raydium"
 )
 
@@ -490,6 +491,24 @@ func TestFromRaydiumCPMMNetsOutAccruedFees(t *testing.T) {
 	}
 }
 
+// Mainnet swap 42LetUBw…: selling token1 into an only-token0 pool pays the creator fee from the output.
+// Vaults are the event's net reserves, so no accruals are set.
+func TestFromRaydiumCPMMMatchesChainOutputSideCreatorFee(t *testing.T) {
+	cfg := &models.RaydiumCPMMConfig{TradeFeeRate: 2_500, CreatorFeeRate: 10_000}
+	pool := &models.RaydiumCPMMPool{EnableCreatorFee: true, CreatorFeeOn: raycpmm.CreatorFeeOnOnlyToken0}
+	quoter, err := FromRaydiumCPMM(pool, cfg, 29_250_433_340, 448_378_014_144_768)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := quoter.QuoteExactIn(22_301_536_139_072, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1_368_804_104 {
+		t.Fatalf("out = %d, chain paid 1368804104", got)
+	}
+}
+
 func TestFromRaydiumCPMMRefusals(t *testing.T) {
 	cfg := &models.RaydiumCPMMConfig{TradeFeeRate: 2_500}
 	if _, err := FromRaydiumCPMM(cpmmModel(false, 0, 0), nil, 1_000, 1_000); !errors.Is(err, ErrPoolNotQuotable) {
@@ -506,6 +525,11 @@ func TestFromRaydiumCPMMRefusals(t *testing.T) {
 	}
 	if _, err := FromRaydiumCPMM(nil, cfg, 1, 1); !errors.Is(err, ErrPoolNotQuotable) {
 		t.Fatal("nil pool must be refused")
+	}
+	unknownSide := cpmmModel(true, 0, 0)
+	unknownSide.CreatorFeeOn = 3
+	if _, err := FromRaydiumCPMM(unknownSide, cfg, 1_000_000, 1_000_000); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("an unknown creator_fee_on must be refused")
 	}
 }
 

@@ -63,12 +63,8 @@ type RaydiumCPMMPool struct {
 	FundFeesToken0     uint64
 	FundFeesToken1     uint64
 
-	// CreatorFeeOn (byte at absolute offset 389) selects which side the creator fee
-	// comes from, an enum over {0, 1, 2}.
-	//
-	// The mapping of those values is not established: no IDL or SDK carries it,
-	// so EffectiveCreatorFeeRate charges the fee on the INPUT alongside the trade
-	// fee, and callers needing the output-side variant must resolve the enum first.
+	// CreatorFeeOn (absolute offset 389) picks the side the creator fee comes from;
+	// resolve it per direction with raycpmm.CreatorFeeOnInput.
 	CreatorFeeOn uint8
 	// EnableCreatorFee (absolute offset 390) gates the creator fee.
 	EnableCreatorFee bool
@@ -131,7 +127,7 @@ func (p *RaydiumCPMMPool) NetReserves(vault0Balance, vault1Balance uint64) (rese
 
 // EffectiveCreatorFeeRate is the creator fee rate this pool actually charges,
 // out of raycpmm.FeeRateDenominator: the config's rate when the pool enables the
-// fee, zero otherwise. Add it to the trade fee rate when quoting.
+// fee, zero otherwise.
 func (p *RaydiumCPMMPool) EffectiveCreatorFeeRate(cfg *RaydiumCPMMConfig) uint64 {
 	if p == nil || cfg == nil || !p.EnableCreatorFee {
 		return 0
