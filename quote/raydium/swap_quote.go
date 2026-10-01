@@ -96,11 +96,27 @@ type swapState struct {
 // input is consumed or known liquidity runs out. zeroForOne true sells token_0 for
 // token_1 (price decreasing). Returns the net output amount.
 func QuoteExactIn(pool SwapPool, zeroForOne bool, amountIn uint64, ticks TickProvider) (uint64, error) {
+	res, err := QuoteExactInDetailed(pool, zeroForOne, amountIn, ticks)
+	if err != nil {
+		return 0, err
+	}
+	return res.AmountOut, nil
+}
+
+// QuoteResult is the output of QuoteExactInDetailed. AmountInConsumed is less than the
+// requested amount when the ticks ran out first, which the on-chain swap cannot fill.
+type QuoteResult struct {
+	AmountOut        uint64
+	AmountInConsumed uint64
+}
+
+// QuoteExactInDetailed is QuoteExactIn reporting how much of the input was consumed.
+func QuoteExactInDetailed(pool SwapPool, zeroForOne bool, amountIn uint64, ticks TickProvider) (QuoteResult, error) {
 	if pool.SqrtPrice == nil || pool.Liquidity == nil {
-		return 0, ErrInvalidPool
+		return QuoteResult{}, ErrInvalidPool
 	}
 	if pool.Status&(1<<4) != 0 {
-		return 0, ErrSwapDisabled
+		return QuoteResult{}, ErrSwapDisabled
 	}
 	limit := raymath.MaxSqrtPrice
 	if zeroForOne {
@@ -115,10 +131,10 @@ func QuoteExactIn(pool SwapPool, zeroForOne bool, amountIn uint64, ticks TickPro
 			break
 		}
 		if err := state.stepToBoundary(boundary, limit, zeroForOne, feeOnInput); err != nil {
-			return 0, err
+			return QuoteResult{}, err
 		}
 	}
-	return state.amountOut, nil
+	return QuoteResult{AmountOut: state.amountOut, AmountInConsumed: amountIn - state.amountRemaining}, nil
 }
 
 // newSwapState seeds the walk from the pool, decaying the volatility reference once
