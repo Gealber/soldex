@@ -168,16 +168,26 @@ func FromRaydiumCLMM(
 	pool *models.RaydiumCLMMPool, cfg *models.RaydiumAmmConfig,
 	ticks soldexray.TickProvider, blockTime uint64,
 ) (Quoter, error) {
+	sp, err := RaydiumCLMMSwapPool(pool, cfg, blockTime)
+	if err != nil {
+		return nil, err
+	}
+	return Raydium(sp, ticks), nil
+}
+
+// RaydiumCLMMSwapPool is the raydium.SwapPool FromRaydiumCLMM quotes, for callers that
+// need raydium.QuoteExactInDetailed. The same refusals apply.
+func RaydiumCLMMSwapPool(pool *models.RaydiumCLMMPool, cfg *models.RaydiumAmmConfig, blockTime uint64) (soldexray.SwapPool, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("%w: nil Raydium CLMM pool", ErrPoolNotQuotable)
+		return soldexray.SwapPool{}, fmt.Errorf("%w: nil Raydium CLMM pool", ErrPoolNotQuotable)
 	}
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: Raydium CLMM needs its AmmConfig for the trade fee rate", ErrPoolNotQuotable)
+		return soldexray.SwapPool{}, fmt.Errorf("%w: Raydium CLMM needs its AmmConfig for the trade fee rate", ErrPoolNotQuotable)
 	}
 	if pool.SwapDisabled() {
-		return nil, fmt.Errorf("%w: Raydium CLMM pool has swaps disabled", ErrPoolNotQuotable)
+		return soldexray.SwapPool{}, fmt.Errorf("%w: Raydium CLMM pool has swaps disabled", ErrPoolNotQuotable)
 	}
-	return Raydium(soldexray.SwapPool{
+	return soldexray.SwapPool{
 		SqrtPrice:      pool.SqrtPriceX64.BigInt(),
 		Liquidity:      pool.Liquidity.BigInt(),
 		TickCurrent:    pool.TickCurrent,
@@ -187,7 +197,7 @@ func FromRaydiumCLMM(
 		Status:         pool.Status,
 		DynamicFee:     pool.DynamicFee,
 		BlockTimestamp: blockTime,
-	}, ticks), nil
+	}, nil
 }
 
 // FromRaydiumCPMM builds a Quoter for a Raydium CP-Swap pool. The vault balances
