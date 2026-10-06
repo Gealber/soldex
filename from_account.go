@@ -31,6 +31,7 @@ var ErrUnknownProgram = errors.New("soldex: unknown program")
 type Aux struct {
 	// Now is the current unix time. DLMM, Orca and Raydium CLMM all decay a
 	// volatility reference against it, so a stale value over-states their fees.
+	// Raydium AMM v4 opens a WaitingTrade pool against it.
 	Now uint64
 
 	// CurrentPoint is the DAMM v2 base-fee schedule position, in the pool's OWN
@@ -53,6 +54,7 @@ type Aux struct {
 
 	// Vault token-account balances.
 	Vault0, Vault1        uint64 // Raydium CP-Swap, token_0 / token_1
+	CoinVault, PcVault    uint64 // Raydium AMM v4
 	BaseVault, QuoteVault uint64 // Pump AMM
 
 	// VaultA and VaultB are the FluxBeam vault token-account balances.
@@ -111,6 +113,13 @@ func FromAccount(owner solana.PublicKey, data []byte, aux Aux) (Quoter, error) {
 			return nil, err
 		}
 		return FromRaydiumCPMM(pool, aux.CPMMConfig, aux.Vault0, aux.Vault1)
+
+	case models.RaydiumAMMV4ProgramID:
+		pool, err := models.DecodeRaydiumAMMV4Pool(data, addr)
+		if err != nil {
+			return nil, err
+		}
+		return FromRaydiumAMMV4(pool, aux.CoinVault, aux.PcVault, aux.Now)
 
 	case PumpAMMProgramID:
 		pool, err := models.DecodePumpPool(data, addr)
