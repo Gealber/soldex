@@ -59,6 +59,20 @@ func TestDecodeRaydiumAMMV4PoolRefusesOtherAccounts(t *testing.T) {
 	}
 }
 
+// Every live pool holds 25/10000 in both trade_fee @144 and swap_fee @176, so only a
+// fixture where they differ can tell which one the decoder reads.
+func TestDecodeRaydiumAMMV4PoolReadsSwapFeeNotTradeFee(t *testing.T) {
+	data := solUSDCAMMV4Data(t)
+	binary.LittleEndian.PutUint64(data[144:152], 30)
+	pool, err := DecodeRaydiumAMMV4Pool(data, solana.PublicKey{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool.SwapFeeNumerator != 25 {
+		t.Fatalf("swap fee numerator %d, want 25 from @176 not 30 from trade_fee @144", pool.SwapFeeNumerator)
+	}
+}
+
 func TestRaydiumAMMV4NetReserves(t *testing.T) {
 	pool := &RaydiumAMMV4Pool{NeedTakePnlCoin: 100, NeedTakePnlPc: 7}
 	coin, pc, err := pool.NetReserves(1_000, 50)
