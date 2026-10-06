@@ -176,3 +176,101 @@ func TestTickArrayWalkerReportsTheLoaderError(t *testing.T) {
 		t.Fatalf("walker err = %v, want %v", walker.Err(), loadErr)
 	}
 }
+
+// farArrays leaves the first two swap arrays empty and initializes one tick in the third,
+// on the a-to-b side (negative) or the b-to-a side (positive).
+func farArrays(aToB bool) (map[int32]TickArray, int32, *big.Int) {
+	sign := int32(1)
+	if aToB {
+		sign = -1
+	}
+	far := sign*2*walkerSpan + 640
+	thirdStart := sign * 2 * walkerSpan
+	arrays := map[int32]TickArray{0: {}, sign * walkerSpan: {}}
+	net := -int64(sign) * 100_000_000_000
+	ticks := TickArray{}
+	ticks[(far-thirdStart)/walkerSpacing] = ArrayTick{Initialized: true, LiquidityNet: int128(net)}
+	arrays[thirdStart] = ticks
+	return arrays, far, big.NewInt(net)
+}
+
+// An empty array is searched through, as get_next_initialized_tick_index does; only the last
+// swap array yields its edge (a-to-b its start, b-to-a start + span - 1).
+func TestTickArrayWalkerSearchesPastEmptyArrays(t *testing.T) {
+	for _, aToB := range []bool{true, false} {
+		arrays, far, _ := farArrays(aToB)
+		walker := NewTickArrayWalker(0, walkerSpacing, aToB, loaderOf(arrays))
+		got, ok := walker.Next(0, aToB)
+		if !ok || got.TickIndex != far || !got.Initialized {
+			t.Fatalf("aToB=%v: next = %+v ok=%v, want initialized tick %d", aToB, got, ok, far)
+		}
+
+		empty := NewTickArrayWalker(0, walkerSpacing, aToB, loaderOf(map[int32]TickArray{}))
+		edge, ok := empty.Next(0, aToB)
+		wantEdge := int32(-2 * walkerSpan)
+		if !aToB {
+			wantEdge = 3*walkerSpan - 1
+		}
+		if !ok || edge.TickIndex != wantEdge || edge.Initialized {
+			t.Fatalf("aToB=%v: edge = %+v ok=%v, want uninitialized %d", aToB, edge, ok, wantEdge)
+		}
+	}
+}
+
+// Across empty arrays the walker prices exactly like a plain walk over the same ticks: a stop
+// at each empty array's edge is an extra floor-rounded step the program does not take.
+func TestTickArrayWalkerPricesEmptyArraysLikeAPlainWalk(t *testing.T) {
+	pool := walkerPool()
+	for _, aToB := range []bool{true, false} {
+		arrays, far, net := farArrays(aToB)
+		nets := map[int32]*big.Int{far: net}
+		mismatched := 0
+		for amountIn := uint64(1_000_000_000_000); amountIn < 3_000_000_000_000; amountIn += 7_919_000_000 {
+			walker := NewTickArrayWalker(0, walkerSpacing, aToB, loaderOf(arrays))
+			got, err := QuoteExactInDetailed(pool, aToB, amountIn, walker.Next)
+			if err != nil {
+				t.Fatalf("aToB=%v: walker quote: %v", aToB, err)
+			}
+			want, err := QuoteExactInDetailed(pool, aToB, amountIn, staticTicks(nets))
+			if err != nil {
+				t.Fatalf("aToB=%v: reference quote: %v", aToB, err)
+			}
+			if got.AmountInConsumed == amountIn && got != want {
+				mismatched++
+			}
+		}
+		if mismatched > 0 {
+			t.Fatalf("aToB=%v: %d amounts priced differently from a plain walk", aToB, mismatched)
+		}
+	}
+}
+
+// Fogo testnet Vortex pool ALnwuEBBf8F3f3h5MYBXepNRif7gy7yJAknhH7gDXXGu (an Orca fork), slot 1191295540:
+// the program paid 21,986,259 for 40,000,000 a-to-b, crossing tick -832 then two empty arrays.
+func TestTickArrayWalkerChainVector(t *testing.T) {
+	sqrtPrice, _ := new(big.Int).SetString("18143792258912789137", 10)
+	pool := SwapPool{SqrtPrice: sqrtPrice, Liquidity: big.NewInt(70_200_000), TickCurrentIndex: -332, TickSpacing: walkerSpacing, FeeRate: 3000}
+	ticks := TickArray{}
+	ticks[(-832+walkerSpan)/walkerSpacing] = ArrayTick{Initialized: true, LiquidityNet: int128(20_000_000)}
+
+	walker := NewTickArrayWalker(pool.TickCurrentIndex, pool.TickSpacing, true, loaderOf(map[int32]TickArray{-walkerSpan: ticks}))
+	got, err := QuoteExactInDetailed(pool, true, 40_000_000, walker.Next)
+	if err != nil {
+		t.Fatalf("quote: %v", err)
+	}
+	if got.AmountOut != 21_986_259 || got.AmountInConsumed != 40_000_000 {
+		t.Fatalf("out %d consumed %d, want 21986259 and 40000000", got.AmountOut, got.AmountInConsumed)
+	}
+}
+
+// The min and max tick arrays end the search at the tick bounds, not at the array edge.
+func TestTickArrayWalkerEndsAtTheTickBounds(t *testing.T) {
+	aToB := NewTickArrayWalker(minTickIndex, walkerSpacing, true, loaderOf(map[int32]TickArray{}))
+	if got, ok := aToB.Next(minTickIndex, true); !ok || got.TickIndex != minTickIndex {
+		t.Fatalf("a-to-b next = %+v ok=%v, want %d", got, ok, minTickIndex)
+	}
+	bToA := NewTickArrayWalker(440_000, walkerSpacing, false, loaderOf(map[int32]TickArray{}))
+	if got, ok := bToA.Next(440_000, false); !ok || got.TickIndex != maxTickIndex {
+		t.Fatalf("b-to-a next = %+v ok=%v, want %d", got, ok, maxTickIndex)
+	}
+}
