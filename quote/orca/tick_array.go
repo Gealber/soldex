@@ -101,8 +101,8 @@ func (w *TickArrayWalker) Err() error {
 	return w.err
 }
 
-// Next mirrors the whirlpool tick search: a-to-b searches down from fromTick inclusive,
-// b-to-a up from the next tick, and an array with no initialized tick yields its edge.
+// Next mirrors get_next_initialized_tick_index: a-to-b searches down from fromTick inclusive,
+// b-to-a up from the next tick, through empty arrays; only the last swap array yields its edge.
 func (w *TickArrayWalker) Next(fromTick int32, aToB bool) (TickBoundary, bool) {
 	if w.err != nil {
 		return TickBoundary{}, false
@@ -112,28 +112,52 @@ func (w *TickArrayWalker) Next(fromTick int32, aToB bool) (TickBoundary, bool) {
 	if !aToB {
 		tick = w.floorToSpacing(fromTick) + w.tickSpacing
 	}
-
+	span := w.tickSpacing * models.TicksPerArray
 	start := models.TickArrayStartIndex(tick, uint16(w.tickSpacing))
-	if !w.reachable(start) || !w.loadArray(start) {
-		return TickBoundary{}, false
-	}
 
-	offset := int((tick - start) / w.tickSpacing)
+	for {
+		if !w.reachable(start) || !w.loadArray(start) {
+			return TickBoundary{}, false
+		}
+		if offset, ok := w.searchArray(int((tick-start)/w.tickSpacing), aToB); ok {
+			return w.boundary(start, offset), true
+		}
+
+		switch {
+		case aToB && start <= minTickIndex:
+			return TickBoundary{TickIndex: minTickIndex}, true
+		case !aToB && start+span > maxTickIndex:
+			return TickBoundary{TickIndex: maxTickIndex}, true
+		case start == w.starts[len(w.starts)-1] && aToB:
+			return TickBoundary{TickIndex: start}, true
+		case start == w.starts[len(w.starts)-1]:
+			return TickBoundary{TickIndex: start + span - 1}, true
+		case aToB:
+			start -= span
+			tick = start + span - w.tickSpacing
+		default:
+			start += span
+			tick = start
+		}
+	}
+}
+
+// searchArray finds the nearest initialized tick from offset in the held array, in the swap direction.
+func (w *TickArrayWalker) searchArray(offset int, aToB bool) (int, bool) {
 	if aToB {
 		for i := offset; i >= 0; i-- {
 			if w.ticks[i].Initialized {
-				return w.boundary(start, i), true
+				return i, true
 			}
 		}
-		return TickBoundary{TickIndex: start}, true
+		return 0, false
 	}
-
 	for i := offset; i < models.TicksPerArray; i++ {
 		if w.ticks[i].Initialized {
-			return w.boundary(start, i), true
+			return i, true
 		}
 	}
-	return TickBoundary{TickIndex: start + (models.TicksPerArray-1)*w.tickSpacing}, true
+	return 0, false
 }
 
 func (w *TickArrayWalker) boundary(start int32, offset int) TickBoundary {
