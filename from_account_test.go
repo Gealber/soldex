@@ -112,7 +112,7 @@ func TestFromAccountCoversEveryVenue(t *testing.T) {
 	for _, pid := range []string{
 		MeteoraDLMMProgramID, MeteoraDAMMV2ProgramID, models.OrcaWhirlpoolProgramID,
 		models.RaydiumCLMMProgramID, models.RaydiumCPMMProgramID, models.RaydiumAMMV4ProgramID,
-		PumpAMMProgramID, PumpBondingProgramID, models.FluxBeamProgramID,
+		PumpAMMProgramID, PumpBondingProgramID, models.FluxBeamProgramID, models.ValiantVortexProgramID,
 	} {
 		// Empty data: every venue should fail to DECODE, never fall through to
 		// ErrUnknownProgram, which would mean the case is missing.

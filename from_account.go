@@ -100,6 +100,13 @@ func FromAccount(owner solana.PublicKey, data []byte, aux Aux) (Quoter, error) {
 		}
 		return FromWhirlpool(pool, aux.Oracle, aux.OrcaTicks, aux.Now)
 
+	case models.ValiantVortexProgramID:
+		pool, err := models.DecodeVortex(data, addr)
+		if err != nil {
+			return nil, err
+		}
+		return FromVortex(pool, aux.OrcaTicks, aux.Now)
+
 	case models.RaydiumCLMMProgramID:
 		pool, err := models.DecodeRaydiumCLMMPool(data, addr)
 		if err != nil {
