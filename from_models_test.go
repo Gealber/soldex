@@ -890,8 +890,8 @@ func TestFromFluxBeamPoolTransferFeesFollowTheDirection(t *testing.T) {
 	}
 }
 
-// Mainnet swap LR8uu8rzc…: the raw vault pre-balances and the pool's need_take_pnl at
-// the time. Quoting on the gross vaults pays 1,191,715,585 instead of 1,191,715,584.
+// LR8uuvMLg6kmUr1SB7a5oMzCZry8H4VJRQZP4RMgTBoU8PrUHpUsy7oW4fDx1uzMZJD9f7MEiGaLfUpdXaBUzEW: raw vault
+// pre-balances and need_take_pnl. Quoting on the gross vaults pays 1,191,715,585, not 1,191,715,584.
 func TestFromRaydiumAMMV4MatchesChainVector(t *testing.T) {
 	pool := &models.RaydiumAMMV4Pool{
 		Status:           models.RaydiumAMMV4StatusSwapOnly,
