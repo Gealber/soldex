@@ -225,6 +225,29 @@ func FromRaydiumCPMM(
 	return RaydiumCPMM(reserve0, reserve1, cfg.TradeFeeRate, pool.EffectiveCreatorFeeRate(cfg), pool.CreatorFeeOn), nil
 }
 
+// FromRaydiumAMMV4 builds a Quoter for a Raydium AMM v4 pool on the no-orderbook
+// path swap_base_in_v2 takes. now is the unix time a WaitingTrade pool opens against.
+func FromRaydiumAMMV4(pool *models.RaydiumAMMV4Pool, coinVaultBalance, pcVaultBalance, now uint64) (Quoter, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%w: nil AMM v4 pool", ErrPoolNotQuotable)
+	}
+	if !pool.CanSwapNoOrderbook(now) {
+		return nil, fmt.Errorf("%w: AMM v4 pool status %d does not swap without an orderbook at %d (opens %d)",
+			ErrPoolNotQuotable, pool.Status, now, pool.PoolOpenTime)
+	}
+	if pool.SwapFeeDenominator == 0 || pool.SwapFeeNumerator >= pool.SwapFeeDenominator {
+		return nil, fmt.Errorf("%w: AMM v4 swap fee %d/%d", ErrPoolNotQuotable, pool.SwapFeeNumerator, pool.SwapFeeDenominator)
+	}
+	coinReserve, pcReserve, err := pool.NetReserves(coinVaultBalance, pcVaultBalance)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrPoolNotQuotable, err)
+	}
+	if coinReserve == 0 || pcReserve == 0 {
+		return nil, fmt.Errorf("%w: AMM v4 pool has an empty side", ErrPoolNotQuotable)
+	}
+	return RaydiumAMMV4(coinReserve, pcReserve, pool.SwapFeeNumerator, pool.SwapFeeDenominator), nil
+}
+
 // FromPumpPool builds a Quoter for a Pump-AMM pool. The quote side is netted
 // through EffectiveQuoteReserve, since newer pools hold reserve outside the
 // vault. baseSupply feeds the market-cap fee tier and stays the caller's.

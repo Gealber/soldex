@@ -13,13 +13,14 @@ import (
 	"github.com/Gealber/soldex/quote/orca"
 	"github.com/Gealber/soldex/quote/pump"
 	"github.com/Gealber/soldex/quote/pumpbc"
+	"github.com/Gealber/soldex/quote/rayammv4"
 	"github.com/Gealber/soldex/quote/raycpmm"
 	"github.com/Gealber/soldex/quote/raydium"
 )
 
 // Quoter is the uniform exact-in interface across every supported venue. aToB
 // true means the pool's first token in (DLMM X, Orca token_a, Raydium token0,
-// DAMM token_a, Pump base), false the reverse.
+// DAMM token_a, Raydium AMM v4 coin, Pump base), false the reverse.
 type Quoter interface {
 	QuoteExactIn(amountIn uint64, aToB bool) (amountOut uint64, err error)
 }
@@ -80,6 +81,17 @@ func RaydiumCPMM(reserve0, reserve1, tradeFeeRate, creatorFeeRate uint64, creato
 			return raycpmm.SwapBaseInput(reserve0, reserve1, amountIn, tradeFeeRate, creatorFeeRate, onInput), nil
 		}
 		return raycpmm.SwapBaseInput(reserve1, reserve0, amountIn, tradeFeeRate, creatorFeeRate, onInput), nil
+	})
+}
+
+// RaydiumAMMV4 binds a Raydium AMM v4 pool by its NET reserves (see
+// models.RaydiumAMMV4Pool.NetReserves). aToB means coin in, pc out.
+func RaydiumAMMV4(coinReserve, pcReserve, feeNumerator, feeDenominator uint64) Quoter {
+	return quoterFunc(func(amountIn uint64, aToB bool) (uint64, error) {
+		if aToB {
+			return rayammv4.SwapBaseIn(coinReserve, pcReserve, amountIn, feeNumerator, feeDenominator), nil
+		}
+		return rayammv4.SwapBaseIn(pcReserve, coinReserve, amountIn, feeNumerator, feeDenominator), nil
 	})
 }
 

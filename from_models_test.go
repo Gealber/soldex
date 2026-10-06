@@ -889,3 +889,76 @@ func TestFromFluxBeamPoolTransferFeesFollowTheDirection(t *testing.T) {
 		t.Fatalf("transfer fee did not reduce the output: %d vs %d", aToB, plain)
 	}
 }
+
+// LR8uuvMLg6kmUr1SB7a5oMzCZry8H4VJRQZP4RMgTBoU8PrUHpUsy7oW4fDx1uzMZJD9f7MEiGaLfUpdXaBUzEW: raw vault
+// pre-balances and need_take_pnl. Quoting on the gross vaults pays 1,191,715,585, not 1,191,715,584.
+func TestFromRaydiumAMMV4MatchesChainVector(t *testing.T) {
+	pool := &models.RaydiumAMMV4Pool{
+		Status:           models.RaydiumAMMV4StatusSwapOnly,
+		SwapFeeNumerator: 25, SwapFeeDenominator: 10_000,
+		NeedTakePnlCoin: 126_694_999, NeedTakePnlPc: 15_139_234,
+	}
+	quoter, err := FromRaydiumAMMV4(pool, 112_570_166_727_477, 13_449_975_885_986, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := quoter.QuoteExactIn(10_000_000_000, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1_191_715_584 {
+		t.Fatalf("out = %d, chain paid 1191715584", got)
+	}
+}
+
+// Only the owed PnL differs between the two pools, so this isolates the netting.
+func TestFromRaydiumAMMV4NetsOutPnl(t *testing.T) {
+	const coinVault, pcVault, in = uint64(1_000_000_000), uint64(1_000_000_000), uint64(10_000_000)
+	lean := &models.RaydiumAMMV4Pool{Status: models.RaydiumAMMV4StatusSwapOnly, SwapFeeNumerator: 25, SwapFeeDenominator: 10_000, NeedTakePnlPc: 400_000_000}
+	full := &models.RaydiumAMMV4Pool{Status: models.RaydiumAMMV4StatusSwapOnly, SwapFeeNumerator: 25, SwapFeeDenominator: 10_000}
+	leanQuoter, err := FromRaydiumAMMV4(lean, coinVault, pcVault, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullQuoter, err := FromRaydiumAMMV4(full, coinVault, pcVault, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leanOut, _ := leanQuoter.QuoteExactIn(in, true)
+	fullOut, _ := fullQuoter.QuoteExactIn(in, true)
+	if leanOut >= fullOut {
+		t.Fatalf("owed PnL did not shrink the pc reserve: %d vs %d", leanOut, fullOut)
+	}
+}
+
+func TestFromRaydiumAMMV4Refusals(t *testing.T) {
+	const openTime = 1_700_000_000
+	pool := func(status uint64) *models.RaydiumAMMV4Pool {
+		return &models.RaydiumAMMV4Pool{Status: status, PoolOpenTime: openTime, SwapFeeNumerator: 25, SwapFeeDenominator: 10_000}
+	}
+	if _, err := FromRaydiumAMMV4(nil, 1, 1, openTime); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("nil pool must be refused")
+	}
+	if _, err := FromRaydiumAMMV4(pool(models.RaydiumAMMV4StatusInitialized), 1_000, 1_000, openTime); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("an orderbook-enabled pool must be refused")
+	}
+	if _, err := FromRaydiumAMMV4(pool(models.RaydiumAMMV4StatusWaitingTrade), 1_000, 1_000, openTime-1); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a WaitingTrade pool must be refused before it opens")
+	}
+	if _, err := FromRaydiumAMMV4(pool(models.RaydiumAMMV4StatusWaitingTrade), 1_000, 1_000, openTime); err != nil {
+		t.Fatalf("a WaitingTrade pool at its open time: %v", err)
+	}
+	noFee := pool(models.RaydiumAMMV4StatusSwapOnly)
+	noFee.SwapFeeDenominator = 0
+	if _, err := FromRaydiumAMMV4(noFee, 1_000, 1_000, openTime); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("a zero fee denominator must be refused")
+	}
+	owing := pool(models.RaydiumAMMV4StatusSwapOnly)
+	owing.NeedTakePnlCoin = 1_001
+	if _, err := FromRaydiumAMMV4(owing, 1_000, 1_000, openTime); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("PnL above the vault must be refused")
+	}
+	if _, err := FromRaydiumAMMV4(pool(models.RaydiumAMMV4StatusSwapOnly), 0, 1_000, openTime); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatal("an empty side must be refused, not quoted to zero")
+	}
+}

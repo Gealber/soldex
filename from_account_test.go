@@ -84,11 +84,34 @@ func TestFromAccountRefusesMissingAux(t *testing.T) {
 	}
 }
 
+// AMM v4 has no discriminator either; its vault balances and clock come from Aux.
+func TestFromAccountDispatchesRaydiumAMMV4(t *testing.T) {
+	data := make([]byte, models.RaydiumAMMV4PoolSize)
+	binary.LittleEndian.PutUint64(data[0:], models.RaydiumAMMV4StatusWaitingTrade)
+	binary.LittleEndian.PutUint64(data[176:], 25)
+	binary.LittleEndian.PutUint64(data[184:], 10_000)
+	binary.LittleEndian.PutUint64(data[224:], 1_700_000_000) // pool_open_time
+	owner := solana.MustPublicKeyFromBase58(models.RaydiumAMMV4ProgramID)
+
+	aux := Aux{CoinVault: 1_000_000_000, PcVault: 2_000_000_000, Now: 1_700_000_000}
+	quoter, err := FromAccount(owner, data, aux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := quoter.QuoteExactIn(1_000_000, true); err != nil || out != 1_993_011 {
+		t.Fatalf("coin in: out = %d, err = %v; want 1993011", out, err)
+	}
+	aux.Now = 0
+	if _, err := FromAccount(owner, data, aux); !errors.Is(err, ErrPoolNotQuotable) {
+		t.Fatalf("a zero Now must not open a WaitingTrade pool: err = %v", err)
+	}
+}
+
 // Every program this package claims to dispatch on must actually be routed.
 func TestFromAccountCoversEveryVenue(t *testing.T) {
 	for _, pid := range []string{
 		MeteoraDLMMProgramID, MeteoraDAMMV2ProgramID, models.OrcaWhirlpoolProgramID,
-		models.RaydiumCLMMProgramID, models.RaydiumCPMMProgramID,
+		models.RaydiumCLMMProgramID, models.RaydiumCPMMProgramID, models.RaydiumAMMV4ProgramID,
 		PumpAMMProgramID, PumpBondingProgramID, models.FluxBeamProgramID,
 	} {
 		// Empty data: every venue should fail to DECODE, never fall through to
