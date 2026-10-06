@@ -1,6 +1,7 @@
 package soldex
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 
@@ -118,6 +119,34 @@ func FromWhirlpool(
 		return nil, err
 	}
 	return Orca(sp, ticks), nil
+}
+
+// FromVortex builds a Quoter for a Valiant Vortex pool, which swaps with the Whirlpool math. It refuses
+// what that math was not verified on: a nonzero extension, and an adaptive fee tier.
+func FromVortex(pool *models.Vortex, ticks orca.TickProvider, now uint64) (Quoter, error) {
+	sp, err := VortexSwapPool(pool, now)
+	if err != nil {
+		return nil, err
+	}
+	return Orca(sp, ticks), nil
+}
+
+// VortexSwapPool is the orca.SwapPool FromVortex quotes, for callers that need
+// orca.QuoteExactInDetailed. The same refusals apply.
+func VortexSwapPool(pool *models.Vortex, now uint64) (orca.SwapPool, error) {
+	if pool == nil {
+		return orca.SwapPool{}, fmt.Errorf("%w: nil vortex", ErrPoolNotQuotable)
+	}
+	for _, b := range pool.Extension {
+		if b != 0 {
+			return orca.SwapPool{}, fmt.Errorf("%w: vortex extension is set", ErrPoolNotQuotable)
+		}
+	}
+	// is_initialized_with_adaptive_fee_tier: such a pool charges through an oracle no Vortex pool has.
+	if binary.LittleEndian.Uint16(pool.FeeTierIndexSeed[:]) != pool.TickSpacing {
+		return orca.SwapPool{}, fmt.Errorf("%w: vortex adaptive fee tier", ErrPoolNotQuotable)
+	}
+	return WhirlpoolSwapPool(&pool.Whirlpool, nil, now)
 }
 
 // WhirlpoolSwapPool is the orca.SwapPool FromWhirlpool quotes, for callers that need

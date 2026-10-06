@@ -18,6 +18,7 @@ venues, decoded straight from on-chain account state.
 | **Raydium CLMM** | `models` (PoolState, tick arrays, dynamic-fee info) | `quote/raydium` — limit orders, dynamic fee, fee_on |
 | **Raydium CP-Swap** (CPMMoo8L) | `models` (PoolState, AmmConfig) | `quote/raycpmm` — constant product, creator fee on the side `creator_fee_on` picks |
 | **Raydium AMM v4** (675kPX9M) | `models` (AmmInfo, packed) | `quote/rayammv4` — constant product on the no-orderbook path, PnL netted out |
+| **Valiant Vortex** (vnt1u7Pz, Fogo) | `models` (Vortex: Whirlpool layout + extension) | `quote/orca` - the Whirlpool math; refuses a set extension or an adaptive fee tier |
 | **FluxBeam** (FLUXubRm) | `models` (SwapV1, packed) | `quote/fluxbeam` — constant product, trade + owner fee, Token-2022 transfer fee |
 | **Pump-AMM** (pAMMBay) | `models` (Pool, market-cap fee tiers) | `quote/pump` — constant product |
 | **pump.fun bonding curve** (6EF8rrec) | `models` (BondingCurve) | `quote/pumpbc` — constant product on virtual reserves |
@@ -89,6 +90,7 @@ When you already know the venue, build from the decoded model:
 q, err := soldex.FromDAMMPool(pool, currentPoint)
 q, err := soldex.FromDLMMPool(pool, ts, bins)
 q, err := soldex.FromWhirlpool(pool, oracle, ticks, now)
+q, err := soldex.FromVortex(pool, ticks, now)
 q, err := soldex.FromRaydiumCLMM(pool, cfg, ticks, blockTime)
 q, err := soldex.FromRaydiumCPMM(pool, cfg, vault0, vault1)
 q, err := soldex.FromRaydiumAMMV4(pool, coinVault, pcVault, now)
